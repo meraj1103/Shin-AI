@@ -380,6 +380,15 @@ class UIBridge:
             )
 
     @classmethod
+    def send_speech(cls, text: str):
+        """Broadcast live spoken text for the 3D mascot speech bubble and lip-sync."""
+        if cls.loop:
+            asyncio.run_coroutine_threadsafe(
+                cls._broadcast({"type": "speech", "text": text}),
+                cls.loop
+            )
+
+    @classmethod
     def send_transcript(cls, heard: str, response: str):
         """Broadcast the latest command + response for the live transcript panel."""
         if cls.loop:

@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shin - Reactive 3D Mate Mascot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        :root, html, body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: transparent !important;
+            background-color: transparent !important;
+            pointer-events: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        }
+
+        #mate-container {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        #three-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* Glassmorphism Speech Bubble */
+        #speech-bubble {
+            position: fixed;
+            max-width: 340px;
+            min-width: 160px;
+            padding: 12px 18px;
+            background: rgba(18, 22, 34, 0.88);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(14, 255, 248, 0.35);
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+            color: #f0f6fc;
+            font-size: 13.5px;
+            line-height: 1.45;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 15px rgba(14, 255, 248, 0.2);
+            pointer-events: auto;
+            z-index: 100;
+            opacity: 0;
+            transform: translateY(12px) scale(0.92);
+            transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        #speech-bubble.active {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+
+        #speech-bubble .speaker-tag {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+            color: #0efff8;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #speech-bubble .speaker-tag .pulse-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #0efff8;
+            box-shadow: 0 0 8px #0efff8;
+            animation: pulse-glow 1.2s infinite alternate;
+        }
+
+        @keyframes pulse-glow {
+            from { opacity: 0.4; transform: scale(0.85); }
+            to { opacity: 1; transform: scale(1.15); }
+        }
+
+        /* Drag & Interaction Hitbox */
+        #mate-hitbox {
+            position: fixed;
+            width: 220px;
+            height: 320px;
+            cursor: grab;
+            pointer-events: auto;
+            z-index: 50;
+            border-radius: 24px;
+            background: transparent;
+        }
+
+        #mate-hitbox:active {
+            cursor: grabbing;
+        }
+
+        /* Status Badge */
+        #status-pill {
+            position: fixed;
+            bottom: 12px;
+            right: 12px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            border-radius: 20px;
+            background: rgba(12, 16, 26, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #8b949e;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            z-index: 100;
+        }
+
+        #status-pill:hover {
+            color: #0efff8;
+            border-color: rgba(14, 255, 248, 0.4);
+            background: rgba(12, 16, 26, 0.9);
+        }
+    </style>
+</head>
+<body>
+    <div id="mate-container">
+        <canvas id="three-canvas"></canvas>
+        <div id="mate-hitbox" title="Drag to move | Double-click to pet | Shin Mate Mascot"></div>
+        <div id="speech-bubble">
+            <div class="speaker-tag">
+                <span class="pulse-dot"></span>
+                <span>Shin</span>
+            </div>
+            <div id="bubble-text">Listening...</div>
+        </div>
+        <div id="status-pill" title="Click to toggle dance mode">🤖 Shin Mate: IDLE</div>
+    </div>
+
+    <!-- Local Three.js Bundle -->
+    <script src="js/three.min.js"></script>
+    <script>
+        'use strict';
+
+        /* ─── State & Connectivity ────────────────────────────────────────── */
+        let currentState = 'idle'; // idle | listening | processing | speaking | dance | standby
+        let wsPort = 8001;
+        let socket = null;
+        let speechTimeout = null;
+
+        /* Mascot Position in viewport */
+        let posX = window.innerWidth - 240;
+        let posY = window.innerHeight - 340;
+        let isDragging = false;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+
+        /* Mouse tracking for head rotation */
+        let mouseX = window.innerWidth / 2;
+        let mouseY = window.innerHeight / 2;
+
+        /* ─── Three.js Scene Setup ────────────────────────────────────────── */
+        const canvas = document.getElementById('three-canvas');
+        const renderer = new THREE.WebGLRenderer({
+            canvas: canvas,
+            alpha: true,
+            antialias: true,
+            powerPreference: 'high-performance'
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 7.5);
+
+        /* Lighting */
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        const rimLight = new THREE.PointLight(0x0efff8, 2.5, 15);
+        rimLight.position.set(-4, 3, -2);
+        scene.add(rimLight);
+
+        const accentLight = new THREE.PointLight(0xff55aa, 1.8, 12);
+        accentLight.position.set(4, -2, 2);
+        scene.add(accentLight);
+
+        /* ─── Procedural 3D Mascot Character (Shin Mate) ──────────────────── */
+        const mascotRoot = new THREE.Group();
+        scene.add(mascotRoot);
+
+        // Body / Torso
+        const bodyGeo = new THREE.CylinderGeometry(0.55, 0.72, 1.1, 32);
+        const bodyMat = new THREE.MeshStandardMaterial({
+            color: 0x1a2130,
+            roughness: 0.35,
+            metalness: 0.2
+        });
+        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+        bodyMesh.position.y = -0.3;
+        mascotRoot.add(bodyMesh);
+
+        // Head Group (rotates towards cursor & emotes)
+        const headGroup = new THREE.Group();
+        headGroup.position.y = 0.85;
+        mascotRoot.add(headGroup);
+
+        const headGeo = new THREE.SphereGeometry(0.85, 36, 36);
+        const headMat = new THREE.MeshStandardMaterial({
+            color: 0xf6f8fc,
+            roughness: 0.25,
+            metalness: 0.1
+        });
+        const headMesh = new THREE.Mesh(headGeo, headMat);
+        headGroup.add(headMesh);
+
+        // Visor / Face Screen
+        const visorGeo = new THREE.SphereGeometry(0.72, 32, 24, 0, Math.PI * 2, 0, Math.PI * 0.48);
+        const visorMat = new THREE.MeshStandardMaterial({
+            color: 0x090d16,
+            roughness: 0.1,
+            metalness: 0.8,
+            emissive: 0x050a14
+        });
+        const visorMesh = new THREE.Mesh(visorGeo, visorMat);
+        visorMesh.rotation.x = 1.35;
+        visorMesh.position.set(0, 0.05, 0.22);
+        headGroup.add(visorMesh);
+
+        // Eyes (Left & Right Glowing Expressive Eyes)
+        const eyeGeo = new THREE.CapsuleGeometry(0.085, 0.18, 16, 16);
+        const eyeMat = new THREE.MeshBasicMaterial({
+            color: 0x0efff8,
+            transparent: true,
+            opacity: 0.95
+        });
+
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(-0.28, 0.15, 0.82);
+        leftEye.rotation.z = 0.08;
+        headGroup.add(leftEye);
+
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat.clone());
+        rightEye.position.set(0.28, 0.15, 0.82);
+        rightEye.rotation.z = -0.08;
+        headGroup.add(rightEye);
+
+        // Talking Mouth Mesh (animates on speech)
+        const mouthGeo = new THREE.CapsuleGeometry(0.04, 0.12, 12, 12);
+        const mouthMat = new THREE.MeshBasicMaterial({
+            color: 0x0efff8,
+            transparent: true,
+            opacity: 0.85
+        });
+        const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+        mouth.rotation.z = Math.PI / 2;
+        mouth.position.set(0, -0.18, 0.82);
+        mouth.scale.set(1, 0.2, 1); // closed by default
+        headGroup.add(mouth);
+
+        // Cat / Cyber Ears (Left & Right)
+        const earGeo = new THREE.ConeGeometry(0.32, 0.55, 4);
+        const earMat = new THREE.MeshStandardMaterial({
+            color: 0x1f293d,
+            roughness: 0.3
+        });
+        const earInnerMat = new THREE.MeshBasicMaterial({ color: 0x0efff8 });
+
+        const leftEar = new THREE.Group();
+        leftEar.position.set(-0.62, 0.72, 0);
+        leftEar.rotation.set(0.1, 0.1, 0.38);
+        const leftEarMesh = new THREE.Mesh(earGeo, earMat);
+        leftEar.add(leftEarMesh);
+        headGroup.add(leftEar);
+
+        const rightEar = new THREE.Group();
+        rightEar.position.set(0.62, 0.72, 0);
+        rightEar.rotation.set(0.1, -0.1, -0.38);
+        const rightEarMesh = new THREE.Mesh(earGeo, earMat);
+        rightEar.add(rightEarMesh);
+        headGroup.add(rightEar);
+
+        // Floating Floating Aura / Halo Ring
+        const haloGeo = new THREE.TorusGeometry(0.95, 0.035, 16, 64);
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: 0x0efff8,
+            transparent: true,
+            opacity: 0.6
+        });
+        const halo = new THREE.Mesh(haloGeo, haloMat);
+        halo.rotation.x = Math.PI / 2;
+        halo.position.y = 0.95;
+        headGroup.add(halo);
+
+        // Floating Hands
+        const handGeo = new THREE.SphereGeometry(0.18, 20, 20);
+        const handMat = new THREE.MeshStandardMaterial({ color: 0xf6f8fc, roughness: 0.3 });
+
+        const leftHand = new THREE.Mesh(handGeo, handMat);
+        leftHand.position.set(-0.85, -0.3, 0.3);
+        mascotRoot.add(leftHand);
+
+        const rightHand = new THREE.Mesh(handGeo, handMat);
+        rightHand.position.set(0.85, -0.3, 0.3);
+        mascotRoot.add(rightHand);
+
+        /* Position Mascot in 3D Scene based on screen coordinates */
+        function updateMascotScreenPosition() {
+            const vector = new THREE.Vector3();
+            // Convert screen (posX, posY) to normalized device coordinates
+            const ndcX = ((posX + 110) / window.innerWidth) * 2 - 1;
+            const ndcY = -((posY + 160) / window.innerHeight) * 2 + 1;
+
+            vector.set(ndcX, ndcY, 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const distance = -camera.position.z / dir.z;
+            const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+            mascotRoot.position.set(pos.x, pos.y, 0);
+
+            // Position HTML elements
+            const hitbox = document.getElementById('mate-hitbox');
+            hitbox.style.left = `${posX}px`;
+            hitbox.style.top = `${posY}px`;
+
+            const bubble = document.getElementById('speech-bubble');
+            bubble.style.left = `${Math.max(20, Math.min(window.innerWidth - 360, posX - 60))}px`;
+            bubble.style.top = `${Math.max(20, posY - 90)}px`;
+        }
+
+        /* ─── State Emotes & Animations ───────────────────────────────────── */
+        let blinkTimer = 0;
+        let isBlinking = false;
+        let mouthOpenPhase = 0;
+        let dancePhase = 0;
+
+        function setMascotState(state) {
+            currentState = state;
+            const pill = document.getElementById('status-pill');
+            pill.textContent = `🤖 Shin Mate: ${state.toUpperCase()}`;
+
+            if (state === 'listening') {
+                eyeMat.color.setHex(0x0efff8);
+                haloMat.color.setHex(0x0efff8);
+                pill.style.borderColor = '#0efff8';
+                pill.style.color = '#0efff8';
+            } else if (state === 'processing') {
+                eyeMat.color.setHex(0xffaa00);
+                haloMat.color.setHex(0xffaa00);
+                pill.style.borderColor = '#ffaa00';
+                pill.style.color = '#ffaa00';
+            } else if (state === 'speaking') {
+                eyeMat.color.setHex(0x0efff8);
+                haloMat.color.setHex(0x0efff8);
+                pill.style.borderColor = '#0efff8';
+                pill.style.color = '#0efff8';
+            } else if (state === 'dance') {
+                eyeMat.color.setHex(0xff33bb);
+                haloMat.color.setHex(0xff33bb);
+                pill.style.borderColor = '#ff33bb';
+                pill.style.color = '#ff33bb';
+            } else {
+                eyeMat.color.setHex(0x0efff8);
+                haloMat.color.setHex(0x0efff8);
+                pill.style.borderColor = 'rgba(255,255,255,0.12)';
+                pill.style.color = '#8b949e';
+            }
+        }
+
+        function showSpeechBubble(text, duration = 5000) {
+            const bubble = document.getElementById('speech-bubble');
+            const bubbleText = document.getElementById('bubble-text');
+            bubbleText.textContent = text;
+            bubble.classList.add('active');
+
+            clearTimeout(speechTimeout);
+            speechTimeout = setTimeout(() => {
+                bubble.classList.remove('active');
+            }, duration);
+        }
+
+        /* ─── Animation Loop ──────────────────────────────────────────────── */
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            const elapsed = clock.getElapsedTime();
+
+            // 1. Natural Breathing & Hovering
+            const hoverY = Math.sin(elapsed * 2.2) * 0.08;
+            bodyMesh.position.y = -0.3 + hoverY;
+            headGroup.position.y = 0.85 + hoverY * 1.1;
+
+            // 2. Head Tilt & Cursor Look-at
+            const targetRotY = ((mouseX / window.innerWidth) - 0.5) * 0.65;
+            const targetRotX = -((mouseY / window.innerHeight) - 0.5) * 0.45;
+            headGroup.rotation.y += (targetRotY - headGroup.rotation.y) * 0.08;
+            headGroup.rotation.x += (targetRotX - headGroup.rotation.x) * 0.08;
+
+            // 3. Blinking Cycle
+            blinkTimer += delta;
+            if (blinkTimer > 3.5 && !isBlinking) {
+                isBlinking = true;
+                leftEye.scale.y = 0.1;
+                rightEye.scale.y = 0.1;
+                setTimeout(() => {
+                    leftEye.scale.y = 1;
+                    rightEye.scale.y = 1;
+                    isBlinking = false;
+                    blinkTimer = 0;
+                }, 140);
+            }
+
+            // 4. State-Specific Behaviors
+            if (currentState === 'speaking') {
+                mouthOpenPhase += delta * 18;
+                const mouthScale = 0.3 + Math.abs(Math.sin(mouthOpenPhase)) * 1.6;
+                mouth.scale.set(mouthScale, 0.45 + mouthScale * 0.5, 1);
+                leftHand.position.y = -0.3 + Math.sin(elapsed * 6) * 0.12;
+                rightHand.position.y = -0.3 + Math.cos(elapsed * 6) * 0.12;
+            } else {
+                mouth.scale.set(1, 0.15, 1);
+                leftHand.position.y = -0.3 + hoverY * 0.8;
+                rightHand.position.y = -0.3 + hoverY * 0.8;
+            }
+
+            if (currentState === 'listening') {
+                leftEar.rotation.z = 0.52 + Math.sin(elapsed * 5) * 0.08;
+                rightEar.rotation.z = -0.52 - Math.sin(elapsed * 5) * 0.08;
+                halo.rotation.z = elapsed * 2.5;
+            } else if (currentState === 'processing') {
+                halo.rotation.z = elapsed * 8.0;
+                mascotRoot.rotation.y = Math.sin(elapsed * 4) * 0.15;
+            } else if (currentState === 'dance') {
+                dancePhase += delta * 4.5;
+                mascotRoot.rotation.z = Math.sin(dancePhase) * 0.28;
+                mascotRoot.position.y += Math.abs(Math.sin(dancePhase * 2)) * 0.25;
+                leftHand.position.y = 0.2 + Math.sin(dancePhase * 2) * 0.35;
+                rightHand.position.y = 0.2 + Math.cos(dancePhase * 2) * 0.35;
+                halo.rotation.z = elapsed * 6;
+            } else {
+                mascotRoot.rotation.z = 0;
+                halo.rotation.z = elapsed * 0.8;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        /* ─── Drag & Drop Placement ───────────────────────────────────────── */
+        const hitbox = document.getElementById('mate-hitbox');
+
+        hitbox.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragOffsetX = e.clientX - posX;
+            dragOffsetY = e.clientY - posY;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            if (isDragging) {
+                posX = Math.max(0, Math.min(window.innerWidth - 220, e.clientX - dragOffsetX));
+                posY = Math.max(0, Math.min(window.innerHeight - 320, e.clientY - dragOffsetY));
+                updateMascotScreenPosition();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Double-click petting reaction
+        hitbox.addEventListener('dblclick', () => {
+            showSpeechBubble("Hehe MJ! That tickles! 😄", 3000);
+            setMascotState('dance');
+            setTimeout(() => setMascotState('idle'), 3500);
+        });
+
+        // Click status pill to toggle dance
+        document.getElementById('status-pill').addEventListener('click', () => {
+            if (currentState === 'dance') {
+                setMascotState('idle');
+            } else {
+                setMascotState('dance');
+                showSpeechBubble("Groovy vibes, MJ! Let's dance! 🎵", 4000);
+            }
+        });
+
+        /* ─── WebSocket Integration (ws://127.0.0.1:8001) ─────────────────── */
+        function connectWebSocket() {
+            try {
+                socket = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+                socket.onopen = () => {
+                    console.log("[ShinMate] Connected to Shin Voice Assistant!");
+                    setMascotState('idle');
+                };
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'state') {
+                            setMascotState(data.state);
+                        } else if (data.type === 'speech') {
+                            showSpeechBubble(data.text, Math.max(4000, data.text.length * 65));
+                        } else if (data.type === 'transcript') {
+                            if (data.response) {
+                                showSpeechBubble(data.response, Math.max(4000, data.response.length * 65));
+                            }
+                        }
+                    } catch (err) {
+                        console.error("[ShinMate] Message parse error:", err);
+                    }
+                };
+                socket.onclose = () => {
+                    setMascotState('standby');
+                    setTimeout(connectWebSocket, 3000);
+                };
+                socket.onerror = () => {
+                    socket.close();
+                };
+            } catch (err) {
+                setTimeout(connectWebSocket, 3000);
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            updateMascotScreenPosition();
+        });
+
+        // Initialize
+        updateMascotScreenPosition();
+        animate();
+        connectWebSocket();
+    </script>
+</body>
+</html>

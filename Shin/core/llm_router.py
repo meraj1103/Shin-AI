@@ -331,39 +331,58 @@ class MultiProviderLLMRouter:
         max_tokens: int,
         temperature: float,
     ) -> Dict[str, Any]:
-        from google import genai
-        from google.genai import types
+        try:
+            from google import genai
+            from google.genai import types
 
-        client = genai.Client(api_key=self.gemini_key, http_options=types.HttpOptions(timeout=4.0))
-        contents = []
-        for msg in messages:
-            role = "user" if msg.get("role") == "user" else "model"
-            contents.append(types.Content(
-                role=role,
-                parts=[types.Part(text=msg.get("content", ""))]
-            ))
+            client = genai.Client(api_key=self.gemini_key, http_options=types.HttpOptions(timeout=5.0))
+            contents = []
+            for msg in messages:
+                role = "user" if msg.get("role") == "user" else "model"
+                contents.append(types.Content(
+                    role=role,
+                    parts=[types.Part(text=msg.get("content", ""))]
+                ))
 
-        config = types.GenerateContentConfig(
-            system_instruction=system_prompt if system_prompt else None,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-        )
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt if system_prompt else None,
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+            )
 
-        for model_name in [self.gemini_model, "gemini-3.8-flash", "gemini-2.0-flash"]:
-            try:
-                resp = client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-                txt = resp.text.strip() if resp and resp.text else ""
-                if txt:
-                    return {"role": "assistant", "content": txt, "tool_calls": []}
-            except Exception as e:
-                err = str(e)
-                if "404" in err or "not found" in err.lower():
-                    continue
-                raise e
+            for model_name in [self.gemini_model, "gemini-3.8-flash", "gemini-2.0-flash"]:
+                try:
+                    resp = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                    txt = resp.text.strip() if resp and resp.text else ""
+                    if txt:
+                        return {"role": "assistant", "content": txt, "tool_calls": []}
+                except Exception as e:
+                    err = str(e)
+                    if "404" in err or "not found" in err.lower():
+                        continue
+                    raise e
+        except Exception:
+            # Fallback to direct REST API if SDK fails or is not installed
+            import requests
+            model_target = self.gemini_model if self.gemini_model and not self.gemini_model.startswith("gemini-3") else "gemini-2.0-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_target}:generateContent?key={self.gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": m.get("content", "")}]} for m in messages if m.get("content")]
+            }
+            if system_prompt:
+                payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+            r = requests.post(url, json=payload, timeout=6.0)
+            if r.status_code == 200:
+                data = r.json()
+                cand = data.get("candidates", [])
+                if cand:
+                    txt = cand[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    if txt:
+                        return {"role": "assistant", "content": txt.strip(), "tool_calls": []}
         raise RuntimeError("Gemini failed on all candidate models")
 
     # ── 2. Groq ───────────────────────────────────────────────────────────────
@@ -374,24 +393,46 @@ class MultiProviderLLMRouter:
         max_tokens: int,
         temperature: float,
     ) -> Dict[str, Any]:
-        from groq import Groq
-
-        # max_retries=0 ensures instantaneous failover (<100ms) on rate-limits (429) to TokenHarbor/Gemini
-        client = Groq(api_key=self.groq_key, max_retries=0)
         full_msgs = []
         if system_prompt:
             full_msgs.append({"role": "system", "content": system_prompt})
         full_msgs.extend(messages)
 
-        resp = client.chat.completions.create(
-            model=self.groq_model,
-            messages=full_msgs,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout=4.0,
-        )
-        txt = resp.choices[0].message.content or ""
-        return {"role": "assistant", "content": txt.strip(), "tool_calls": []}
+        try:
+            from groq import Groq
+            # max_retries=0 ensures instantaneous failover (<100ms) on rate-limits (429) to TokenHarbor/Gemini
+            client = Groq(api_key=self.groq_key, max_retries=0)
+            resp = client.chat.completions.create(
+                model=self.groq_model,
+                messages=full_msgs,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=5.0,
+            )
+            txt = resp.choices[0].message.content or ""
+            return {"role": "assistant", "content": txt.strip(), "tool_calls": []}
+        except Exception as exc:
+            # Fallback to direct HTTP REST if Groq SDK is missing or fails
+            try:
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {self.groq_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": self.groq_model or "llama-3.3-70b-versatile",
+                    "messages": full_msgs,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                }
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=6.0)
+                if r.status_code == 200:
+                    data = r.json()
+                    txt = data["choices"][0]["message"]["content"] or ""
+                    return {"role": "assistant", "content": txt.strip(), "tool_calls": []}
+            except Exception:
+                pass
+            raise exc
 
     # ── 3. OpenAI ─────────────────────────────────────────────────────────────
     def _call_openai(

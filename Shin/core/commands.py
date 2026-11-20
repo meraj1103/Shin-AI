@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Union
 
 import psutil
 import pyautogui
@@ -93,6 +93,7 @@ _APP_ALIASES: dict[str, str] = {
     "powerpoint":   "powerpnt.exe",
     "outlook":      "outlook.exe",
     "teams":        "teams.exe",
+    "steam":        "steam.exe",
     "discord":      "discord.exe",
     "spotify":      "spotify.exe",
     "vlc":          "vlc.exe",
@@ -393,13 +394,6 @@ def open_app(args: dict) -> str:
             return _get_smart_app_launch_reply(app)
         except Exception as exc:
             logger.warning("open_app URL opening failed: %s", exc)
-
-    # Check known Web Aliases first if not an explicit desktop app request
-    if not explicit_app and app_lower in _WEB_ALIASES:
-        web_url = _WEB_ALIASES[app_lower]
-        logger.info("open_app: %r matched known web alias %s", app, web_url)
-        _open_in_browser(web_url)
-        return _get_smart_app_launch_reply(app)
 
     # Tier 2: ms- URI scheme or Windows App Protocols (UWP Apps)
     if ":" in target and "\\" not in target and "/" not in target:
@@ -5376,8 +5370,72 @@ def repeat_last_response(args: dict = None) -> str:
     return "I haven't said anything yet, MJ!"
 
 
+def mate_dance(args: dict) -> str:
+    """Toggle Mate mascot dance mode."""
+    try:
+        from Shin.core import mate_bridge
+        mode = mate_bridge.MateBridge.get().toggle_dance()
+        if mode == "dance":
+            return "Aye! Dance mode on! Let's groove!"
+        return "Dance off, back to work!"
+    except Exception as exc:
+        return f"Could not toggle mascot dance: {exc}"
+
+
+def mate_minimize(args: dict) -> str:
+    """Minimize Mate mascot window."""
+    try:
+        from Shin.core import mate_bridge
+        mate_bridge.MateBridge.get().minimize()
+        return "Minimized the avatar window."
+    except Exception as exc:
+        return f"Could not minimize avatar: {exc}"
+
+
+def mate_restore(args: dict) -> str:
+    """Restore Mate mascot window."""
+    try:
+        from Shin.core import mate_bridge
+        mate_bridge.MateBridge.get().restore()
+        return "Restored avatar to desktop."
+    except Exception as exc:
+        return f"Could not restore avatar: {exc}"
+
+
+def set_avatar_scale(args: dict) -> str:
+    """Set Mate mascot avatar scale."""
+    try:
+        from Shin.core import mate_bridge
+        raw_scale = args.get("scale") or args.get("size") or 1.0
+        scale = float(raw_scale)
+        ok = mate_bridge.MateBridge.get().set_avatar_scale(scale)
+        if ok:
+            return f"Avatar scale set to {scale}."
+        return "Failed to update avatar scale in settings."
+    except Exception as exc:
+        return f"Could not set avatar scale: {exc}"
+
+
+def set_avatar_model(args: dict) -> str:
+    """Set custom VRM avatar model path."""
+    try:
+        from Shin.core import mate_bridge
+        model_path = args.get("path") or args.get("model") or ""
+        ok = mate_bridge.MateBridge.get().set_avatar_model(str(model_path))
+        if ok:
+            return f"Avatar model set to {model_path}."
+        return "Failed to set avatar model path."
+    except Exception as exc:
+        return f"Could not set avatar model: {exc}"
+
+
 # Dictionary mapping intent names to their handler functions
 HANDLERS = {
+    "mate_dance":          mate_dance,
+    "mate_minimize":       mate_minimize,
+    "mate_restore":        mate_restore,
+    "set_avatar_scale":    set_avatar_scale,
+    "set_avatar_model":    set_avatar_model,
     "repeat_last_response": repeat_last_response,
     "run_shin_agent":      run_shin_agent_command,
     "inspect_active_app":  inspect_active_app_command,
@@ -5672,6 +5730,10 @@ def check_command_safety(intent_name: str, args: dict) -> tuple[bool, str]:
         ".exe", ".com", ".pif", ".hta", ".cpl", ".jar", ".msi", ".msp", ".lnk"
     }
 
+    # Defensive check: ensure args is a dictionary
+    if not isinstance(args, dict):
+        args = {}
+
     # Scan argument values
     for arg_key, arg_val in args.items():
         if isinstance(arg_val, str):
@@ -5710,15 +5772,32 @@ def check_command_safety(intent_name: str, args: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def dispatch(intent: dict) -> Optional[str]:
+def dispatch(intent: Union[dict, str], args: Optional[dict] = None, **kwargs) -> Optional[str]:
     """
     Run the handler for the parsed intent.
+    Accepts either:
+      - a single dict: {"intent": str, "args": dict, ["_untrusted": bool]}
+      - positional arguments: dispatch("open_app", {"app": "whatsapp"})
     Returns the response string, or None if intent is 'unknown'.
     May raise ConfirmationRequired for destructive ops.
     """
-    name = intent.get("intent", "unknown")
-    args = intent.get("args", {})
-    triggered_by_untrusted = bool(intent.get("_untrusted", False))
+    if isinstance(intent, str):
+        payload = {"intent": intent, "args": args if isinstance(args, dict) else {}}
+        if "_untrusted" in kwargs:
+            payload["_untrusted"] = kwargs["_untrusted"]
+        intent_dict = payload
+    elif isinstance(intent, dict):
+        intent_dict = dict(intent)
+        if args and isinstance(args, dict) and ("args" not in intent_dict or not intent_dict["args"]):
+            intent_dict["args"] = args
+    else:
+        return None
+
+    name = intent_dict.get("intent", "unknown")
+    raw_args = intent_dict.get("args")
+    args = raw_args if isinstance(raw_args, dict) else {}
+    intent_dict["args"] = args
+    triggered_by_untrusted = bool(intent_dict.get("_untrusted", False))
 
     # CaMeL Zero-Trust Shield: check if plan is safe for untrusted sources
     try:

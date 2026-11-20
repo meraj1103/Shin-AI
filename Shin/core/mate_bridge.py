@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -49,8 +50,13 @@ for _p in (str(_ROOT_DIR), str(_SHIN_DIR), str(_CORE_DIR)):
 _DEFAULT_ENGINE_EXE = _SHIN_DIR / "mate engin" / "MateEngineX.exe"
 _STATE_FILE = _DATA_DIR / "shin_mate_state.json"
 _POS_FILE = _DATA_DIR / "mate_position.json"
-_MATE_PERSISTENT_DIR = Path(os.environ.get("USERPROFILE", "")) / "AppData" / "LocalLow" / "Shinymoon" / "MateEngineX"
+_MATE_PERSISTENT_DIR = Path(os.environ.get("USERPROFILE") or Path.home()) / "AppData" / "LocalLow" / "Shinymoon" / "MateEngineX"
 _MATE_PROMPT_FILE = _MATE_PERSISTENT_DIR / "ZomeAI_prompt.txt"
+_MATE_SETTINGS_FILE = _MATE_PERSISTENT_DIR / "settings.json"
+_MATE_SYNC_DIR = _MATE_PERSISTENT_DIR / "Sync"
+_MATE_DANCE_BUS_FILE = _MATE_SYNC_DIR / "avatar_dance_play_bus.json"
+_CUSTOM_MODELS_DIR = _SHIN_DIR / "mate engin" / "custom_models"
+_CUSTOM_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def find_mate_engine_exe() -> Optional[Path]:
@@ -101,6 +107,9 @@ class MateBridge:
 
         # LLM Proxy Server for Port 13333
         self._proxy_server: Optional[Any] = None
+
+        # Dance IPC Bus version counter
+        self._dance_bus_v: int = self._read_initial_bus_v()
 
     @classmethod
     def get(cls) -> MateBridge:
@@ -154,6 +163,13 @@ class MateBridge:
     def sync_speech(self, text: str) -> None:
         """Broadcast live speech text and avatar speaking state to Mate Engine."""
         self.set_state("speaking", {"speech_text": text, "length": len(text)})
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(b"day_start", ("127.0.0.1", 32145))
+            sock.close()
+        except Exception:
+            pass
 
     def _handle_llm_query(self, query: str, messages: List[Dict[str, str]]) -> str:
         """Handle incoming chat completions from Mate Engine on port 13333."""
@@ -189,7 +205,10 @@ class MateBridge:
         # 1. Sync persona prompt into Mate Engine
         self.sync_prompt()
 
-        # 2. Start Port 13333 LLM Proxy Server
+        # 2. Calibrate soundThreshold to 0.06 so Shin TTS triggers WASAPI audio reactivity
+        self.ensure_sound_threshold(0.06)
+
+        # 3. Start Port 13333 LLM Proxy Server
         if self._proxy_server is None:
             try:
                 from Shin.core.mate_llm_proxy import MateLLMProxyServer
@@ -392,14 +411,195 @@ class MateBridge:
         except Exception as exc:
             logger.debug("Failed writing state file: %s", exc)
 
+    def _read_initial_bus_v(self) -> int:
+        if _MATE_DANCE_BUS_FILE.exists():
+            try:
+                with open(_MATE_DANCE_BUS_FILE, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                    if content:
+                        data = json.loads(content)
+                        return int(data.get("v", 0))
+            except Exception:
+                pass
+        return 0
+
+    def send_dance_bus_command(self, cmd: str, sid: str = "", title: str = "", index: int = 0) -> bool:
+        """Send an IPC command to MateEngineX via avatar_dance_play_bus.json.
+        Commands supported by Unity CustomDancePlayer:
+          • 'PlayCurrentOrFirst' - starts/resumes dancing
+          • 'StopPlay'           - stops dancing and returns to idle
+          • 'PlayNext'           - advances to next dance in playlist
+          • 'PlayPrev'           - returns to previous dance in playlist
+        """
+        with self._lock:
+            temp_file = None
+            try:
+                _MATE_SYNC_DIR.mkdir(parents=True, exist_ok=True)
+                now_utc = time.time()
+                self._dance_bus_v += 1
+                payload = {
+                    "v": self._dance_bus_v,
+                    "cmd": cmd,
+                    "sid": sid,
+                    "title": title,
+                    "index": index,
+                    "atUtc": now_utc,
+                    "writeUtc": now_utc,
+                }
+                temp_file = _MATE_SYNC_DIR / f"dance_bus_temp_{os.getpid()}_{threading.get_ident()}_{uuid.uuid4().hex[:8]}.json"
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                temp_file.replace(_MATE_DANCE_BUS_FILE)
+                temp_file = None
+                logger.info("Sent dance bus command to Mate Engine: %s (v=%d)", cmd, self._dance_bus_v)
+                return True
+            except Exception as exc:
+                logger.warning("Failed to send dance bus command: %s", exc)
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                return False
+
+    def start_dance(self, title: str = "") -> bool:
+        """Command the Mate mascot to start dancing."""
+        self.set_state("dance")
+        return self.send_dance_bus_command("PlayCurrentOrFirst", title=title)
+
+    def stop_dance(self) -> bool:
+        """Command the Mate mascot to stop dancing."""
+        self.set_state("idle")
+        return self.send_dance_bus_command("StopPlay")
+
     def toggle_dance(self) -> str:
-        """Toggle dance mode on/off."""
+        """Toggle dance mode on/off via avatar_dance_play_bus.json IPC."""
         if self.current_state == "dance":
-            self.set_state("idle")
+            self.stop_dance()
             return "idle"
         else:
-            self.set_state("dance")
+            self.start_dance()
             return "dance"
+
+    def load_mate_settings(self) -> Dict[str, Any]:
+        """Read MateEngineX settings.json if present."""
+        if _MATE_SETTINGS_FILE.exists():
+            try:
+                with open(_MATE_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as exc:
+                logger.debug("Failed reading Mate settings.json: %s", exc)
+        return {}
+
+    def save_mate_settings(self, settings: Dict[str, Any]) -> bool:
+        """Write back MateEngineX settings.json atomically."""
+        with self._lock:
+            temp_file = None
+            try:
+                _MATE_PERSISTENT_DIR.mkdir(parents=True, exist_ok=True)
+                temp_filename = f"settings_temp_{os.getpid()}_{threading.get_ident()}_{uuid.uuid4().hex[:8]}.json"
+                temp_file = _MATE_PERSISTENT_DIR / temp_filename
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    json.dump(settings, f, indent=2)
+                temp_file.replace(_MATE_SETTINGS_FILE)
+                temp_file = None
+                logger.info("Saved Mate Engine settings to %s", _MATE_SETTINGS_FILE)
+                return True
+            except Exception as exc:
+                logger.warning("Failed writing Mate settings.json: %s", exc)
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                return False
+
+    def ensure_sound_threshold(self, threshold: float = 0.06) -> bool:
+        """Configure MateEngineX settings.json soundThreshold to 0.06
+        so Shin's voice TTS cleanly triggers the avatar's WASAPI audio-reactive mouth/animation.
+        """
+        settings = self.load_mate_settings()
+        if not settings:
+            settings = {"soundThreshold": threshold, "avatarSize": 1.0, "isTopmost": True}
+            return self.save_mate_settings(settings)
+
+        current_threshold = settings.get("soundThreshold")
+        if current_threshold != threshold:
+            settings["soundThreshold"] = threshold
+            logger.info("Calibrating Mate soundThreshold from %s to %s for TTS reactivity", current_threshold, threshold)
+            return self.save_mate_settings(settings)
+        return True
+
+    def set_avatar_scale(self, scale: float) -> bool:
+        """Adjust avatar scale (clamped between 0.2 and 3.0)."""
+        try:
+            clamped = max(0.2, min(float(scale), 3.0))
+            settings = self.load_mate_settings()
+            settings["avatarSize"] = round(clamped, 2)
+            ok = self.save_mate_settings(settings)
+            if ok:
+                logger.info("Avatar scale updated to %s", clamped)
+            return ok
+        except Exception as exc:
+            logger.warning("Error setting avatar scale: %s", exc)
+            return False
+
+    def set_avatar_model(self, model_path: str) -> bool:
+        """Configure selectedModelPath in settings.json to load a custom VRM avatar."""
+        try:
+            if not isinstance(model_path, str) or not model_path.strip().lower().endswith(".vrm"):
+                logger.warning("Rejected non-vrm model path: %s", model_path)
+                return False
+
+            cleaned_path = model_path.strip()
+            if "\0" in cleaned_path:
+                return False
+
+            vrm = Path(cleaned_path)
+            # Check candidate in _CUSTOM_MODELS_DIR if not an absolute or existing file directly
+            if not vrm.is_file():
+                safe_name = Path(cleaned_path).name
+                candidate = (_CUSTOM_MODELS_DIR / safe_name).resolve()
+                if candidate.is_file():
+                    vrm = candidate
+            else:
+                vrm = vrm.resolve()
+
+            if not vrm.is_file():
+                logger.warning("VRM model file does not exist: %s", model_path)
+                return False
+
+            resolved_path = str(vrm)
+            settings = self.load_mate_settings()
+            settings["selectedModelPath"] = resolved_path
+            ok = self.save_mate_settings(settings)
+            if ok:
+                logger.info("Set avatar model path to: %s", resolved_path)
+            return ok
+        except Exception as exc:
+            logger.warning("Error setting avatar model: %s", exc)
+            return False
+
+    def get_available_models(self) -> list[str]:
+        """Scan custom_models folder and persistent avatar library for available VRMs."""
+        models: list[str] = []
+        if _CUSTOM_MODELS_DIR.exists():
+            for p in _CUSTOM_MODELS_DIR.glob("*.vrm"):
+                models.append(str(p.resolve()))
+
+        avatars_json = _MATE_PERSISTENT_DIR / "avatars.json"
+        if avatars_json.exists():
+            try:
+                with open(avatars_json, "r", encoding="utf-8") as f:
+                    av_data = json.load(f)
+                    if isinstance(av_data, list):
+                        for item in av_data:
+                            path_str = item.get("path") if isinstance(item, dict) else str(item)
+                            if path_str and path_str not in models:
+                                models.append(path_str)
+            except Exception:
+                pass
+        return models
 
     def minimize(self) -> None:
         """Hide the mascot window."""

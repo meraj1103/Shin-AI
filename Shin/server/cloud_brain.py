@@ -72,6 +72,8 @@ LOCAL_HARDWARE_INTENTS = {
     "read_clipboard", "copy_to_clipboard", "clipboard_search",
     "mate_dance", "mate_minimize", "mate_restore",
     "sleep_shutdown", "restart_pc", "lock_pc",
+    "web_search", "youtube_play", "open_shin_web", "open_website", "wiki_search",
+    "pause_listening", "resume_listening",
 }
 
 app = FastAPI(
@@ -154,6 +156,16 @@ def handle_chat_turn(req: ChatRequest, authorized: bool = Depends(verify_token))
         elif intent_name == "mate_dance":
             spoken_text = "Let's dance, MJ! 🎵"
             mate_state = "dance"
+        elif intent_name == "web_search":
+            spoken_text = f"Searching the web for {args.get('query', 'your search')}, MJ!"
+        elif intent_name == "youtube_play":
+            spoken_text = f"Playing {args.get('query', 'music')} on YouTube, MJ!"
+        elif intent_name in ("open_shin_web", "open_website"):
+            spoken_text = "Opening web page on your desktop, MJ!"
+        elif intent_name == "pause_listening":
+            spoken_text = "Standing by. Say 'start listening' to resume."
+        elif intent_name == "resume_listening":
+            spoken_text = "I am back online!"
         else:
             spoken_text = f"Executing {intent_name.replace('_', ' ')} on your PC, MJ!"
     elif intent_name == "chat":

@@ -758,6 +758,10 @@ def _tts_worker():
             pass
         ui_server.UIBridge.send_state("speaking")
         try:
+            ui_server.UIBridge.send_speech(cleaned_text)
+        except Exception:
+            pass
+        try:
             # Check language state: LM Studio/Kokoro only support English voices
             # Fall back to Edge TTS for Hindi/Marathi which have native neural voices
             lang = get_language_state()
@@ -1071,15 +1075,15 @@ def listen_once(timeout: int = 5, phrase_time_limit: int = 10, bypass_voice_auth
     global _recognizer, _ambient_calibrated
     if _recognizer is None:
         _recognizer = sr.Recognizer()
-        # 2.0s allows natural breathing pauses and thought-retrieval without cutting off half-sentence
-        _recognizer.pause_threshold = 2.0
+        # Fast endpointing: 0.75s silence terminates phrase (standard voice assistant responsiveness)
+        _recognizer.pause_threshold = 0.75
         # Responsive speech onset detection
         _recognizer.phrase_threshold = 0.2
-        # Retain trailing audio so final word syllables (like '-tube' in 'youtube') are never clipped
-        _recognizer.non_speaking_duration = 0.8
-        # Gentle dynamic multiplier prevents vocal energy spikes from elevating threshold
-        _recognizer.dynamic_energy_ratio = 1.15
-        _recognizer.dynamic_energy_adjustment_damping = 0.2
+        # Retain trailing audio (must satisfy pause_threshold >= non_speaking_duration >= 0)
+        _recognizer.non_speaking_duration = 0.45
+        # Dynamic energy multiplier: 1.25 gives clean silence detection without fan/room noise jitter
+        _recognizer.dynamic_energy_ratio = 1.25
+        _recognizer.dynamic_energy_adjustment_damping = 0.15
 
     r = _recognizer
 
@@ -1581,7 +1585,35 @@ def handle_command(text: str) -> bool:
             client = CloudBrainClient()
             if client.is_available():
                 brain_resp = client.process_utterance(text)
+                b_intent = brain_resp.get("intent", "")
                 spoken = brain_resp.get("spoken_text", "")
+
+                # Handle session & listener state controls
+                if b_intent == "pause_listening":
+                    _listening_paused = True
+                    try:
+                        ui_server.UIBridge.send_state("standby")
+                        from Shin.core import mate_bridge
+                        mate_bridge.MateBridge.get().set_state("standby")
+                    except Exception:
+                        pass
+                    speak("Standing by. Say 'start listening' to resume.")
+                    return True
+                elif b_intent == "resume_listening":
+                    _listening_paused = False
+                    _bypass_wake_once = True
+                    try:
+                        ui_server.UIBridge.send_state("idle")
+                        from Shin.core import mate_bridge
+                        mate_bridge.MateBridge.get().set_state("idle")
+                    except Exception:
+                        pass
+                    speak("I am back online.")
+                    return True
+                elif b_intent in ("exit", "quit", "shutdown"):
+                    speak("Goodbye MJ! Shutting down.")
+                    sys.exit(0)
+
                 if spoken:
                     speak(spoken)
                 # Execute any local hardware commands commanded by the cloud
@@ -2061,7 +2093,7 @@ def run(no_wake: bool = True):
 
             print(f"\n{Fore.GREEN}🎙️  Listening...{Style.RESET_ALL}")
             ui_server.UIBridge.send_state("listening")
-            text = listen_once(timeout=8, phrase_time_limit=15)
+            text = listen_once(timeout=8, phrase_time_limit=10)
 
             if not text:
                 if not no_wake:

@@ -182,7 +182,9 @@ def main():
     parser.add_argument("--height", type=int, default=500, help="Initial height")
     args = parser.parse_args()
 
-    url = f"http://127.0.0.1:{args.port}/orb.html?platform=overlay"
+    mascot_mode = os.getenv("MASCOT_MODE", "mate").lower()
+    html_target = "mate.html" if mascot_mode == "mate" else "orb.html"
+    url = f"http://127.0.0.1:{args.port}/{html_target}?platform=overlay"
     print(f"[orb_window] Loading: {url}", flush=True)
 
     try:
