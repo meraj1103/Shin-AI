@@ -24,11 +24,22 @@ except ImportError:
 class CloudBrainClient:
     """Client for Shin Cloud Brain service."""
 
+    _session: Optional[Any] = None
+    _last_health_check: float = 0.0
+    _is_healthy: bool = False
+
     def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
         raw_url = base_url or os.getenv("SHIN_CLOUD_URL", "http://127.0.0.1:8080")
         self.base_url = raw_url.rstrip("/")
         self.api_key = api_key or os.getenv("SHIN_API_KEY", "")
         self.timeout = float(os.getenv("SHIN_CLOUD_TIMEOUT", "15.0"))
+        if CloudBrainClient._session is None and requests:
+            CloudBrainClient._session = requests.Session()
+
+    def _get_session(self):
+        if CloudBrainClient._session is None and requests:
+            CloudBrainClient._session = requests.Session()
+        return CloudBrainClient._session or requests
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -36,15 +47,24 @@ class CloudBrainClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def is_available(self) -> bool:
-        """Check if Cloud Brain server is reachable and healthy."""
+    def is_available(self, force: bool = False) -> bool:
+        """Check if Cloud Brain server is reachable and healthy (cached with 30s TTL)."""
         if not requests:
             return False
+        now = time.time()
+        if not force and (now - CloudBrainClient._last_health_check < 30.0):
+            return CloudBrainClient._is_healthy
+
         try:
             url = f"{self.base_url}/api/health"
-            resp = requests.get(url, headers=self._headers(), timeout=3.0)
-            return resp.status_code == 200
+            session = self._get_session()
+            resp = session.get(url, headers=self._headers(), timeout=2.5)
+            CloudBrainClient._is_healthy = (resp.status_code == 200)
+            CloudBrainClient._last_health_check = now
+            return CloudBrainClient._is_healthy
         except Exception:
+            CloudBrainClient._is_healthy = False
+            CloudBrainClient._last_health_check = now
             return False
 
     def process_utterance(self, text: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -72,7 +92,8 @@ class CloudBrainClient:
         except Exception:
             pass
 
-        resp = requests.post(url, json=payload, headers=self._headers(), timeout=self.timeout)
+        session = self._get_session()
+        resp = session.post(url, json=payload, headers=self._headers(), timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
 
@@ -90,7 +111,7 @@ class CloudBrainClient:
             duration = float(island_data.get("duration", 4.0))
             island_bridge.IslandBridge.get()._send_to_island(title, body, duration)
         except Exception as e:
-            logger.debug("Failed syncing island in cloud client: %e", e)
+            logger.debug("Failed syncing island in cloud client: %s", e)
 
         try:
             from Shin.core import mate_bridge
@@ -114,9 +135,28 @@ class CloudBrainClient:
 
         logger.info("Executing local hardware action requested by Cloud Brain: %s (args: %s)", intent, args)
         try:
-            import commands
-            result = commands.dispatch(intent, args)
+            try:
+                from Shin.core import commands
+            except ImportError:
+                import commands
+
+            intent_payload = {
+                "intent": intent,
+                "args": args if isinstance(args, dict) else {},
+            }
+            if response_data.get("_untrusted"):
+                intent_payload["_untrusted"] = True
+
+            result = commands.dispatch(intent_payload)
             return str(result) if result else None
+        except getattr(commands, "ConfirmationRequired", Exception) as req:
+            if hasattr(req, "prompt"):
+                return req.prompt
+            raise
+        except getattr(commands, "MissingArgument", Exception) as req:
+            if hasattr(req, "prompt"):
+                return req.prompt
+            raise
         except Exception as exc:
             logger.error("Error executing local action %s: %s", intent, exc)
             return f"Action execution error: {exc}"

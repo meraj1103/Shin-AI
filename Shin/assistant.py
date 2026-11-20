@@ -1660,7 +1660,7 @@ def handle_command(text: str) -> bool:
             pass
     
     # ── Interactive Training Session Interceptor ───────────────────────────────
-    global _active_training_session, _bypass_wake_once
+    global _active_training_session
     if _active_training_session and _active_training_session.get("active"):
         cleaned = text.lower().strip()
         # Cancel / Stop
