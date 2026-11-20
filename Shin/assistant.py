@@ -43,6 +43,22 @@ os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pygame.*")
 
+# ── Auto-reroute to supported virtual environment if started with Python >= 3.14 ──
+if sys.version_info >= (3, 14):
+    from pathlib import Path as _Path
+    _candidates = [
+        _Path(__file__).resolve().parent.parent / ".venv" / "Scripts" / "python.exe",
+        _Path(__file__).resolve().parent / ".venv" / "Scripts" / "python.exe",
+    ]
+    for _vpy in _candidates:
+        if _vpy.exists():
+            print(f"[Shin] Detected Python {sys.version.split()[0]} (PyAudio lacks 3.14 wheels). Rerouting to project virtualenv ({_vpy})...")
+            try:
+                import subprocess as _subp
+                sys.exit(_subp.call([str(_vpy)] + sys.argv))
+            except Exception:
+                pass
+
 # ── Self-healing dependency bootstrap ──────────────────────────────────────────
 def _ensure_dependencies():
     """Ensure essential packages are installed with per-package error isolation."""
