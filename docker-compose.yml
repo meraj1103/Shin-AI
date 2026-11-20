@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  shin-brain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shin-cloud-brain
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SHIN_API_KEY=${SHIN_API_KEY:-shin-secret-token-change-me}
+    volumes:
+      - ./Shin/data:/app/Shin/data

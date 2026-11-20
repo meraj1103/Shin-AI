@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<meta name="theme-color" content="#0a0a1a"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="Shin"/>
+<title>Shin — Mobile Companion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg:        #07071a;
+    --surface:   #0f0f2a;
+    --glass:     rgba(255,255,255,0.05);
+    --glass-b:   rgba(255,255,255,0.08);
+    --border:    rgba(255,255,255,0.10);
+    --cyan:      #00d4ff;
+    --purple:    #8b5cf6;
+    --pink:      #ec4899;
+    --green:     #10b981;
+    --red:       #ef4444;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --radius:    16px;
+    --font:      'Outfit', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+
+  /* ── Background glow ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(139,92,246,.18) 0%, transparent 70%),
+                radial-gradient(ellipse 50% 40% at 80% 90%, rgba(0,212,255,.10) 0%, transparent 60%);
+    pointer-events: none; z-index: 0;
+  }
+
+  /* ══ SCREENS ══ */
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; transition: opacity .35s, transform .35s; }
+  .screen.hidden { opacity: 0; pointer-events: none; transform: scale(.97); }
+
+  /* ══ LOGIN SCREEN ══ */
+  #login-screen { gap: 40px; padding: 24px; }
+  .logo { text-align: center; }
+  .logo-orb {
+    width: 88px; height: 88px; border-radius: 50%; margin: 0 auto 16px;
+    background: conic-gradient(from 0deg, var(--cyan), var(--purple), var(--pink), var(--cyan));
+    animation: spin 4s linear infinite;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .logo-orb::after {
+    content: '✦';
+    font-size: 36px; color: white;
+    position: absolute;
+    background: var(--bg); width: 70px; height: 70px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    text-shadow: 0 0 20px var(--cyan);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .logo h1 { font-size: 32px; font-weight: 700; letter-spacing: 4px; background: linear-gradient(90deg, var(--cyan), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .logo p { font-size: 14px; color: var(--muted); margin-top: 6px; letter-spacing: 1px; }
+
+  .pin-dots { display: flex; gap: 20px; justify-content: center; }
+  .pin-dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--border); background: transparent; transition: all .2s; }
+  .pin-dot.filled { background: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+  .pin-dot.error { background: var(--red); border-color: var(--red); box-shadow: 0 0 12px var(--red); animation: shake .4s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-8px)} 40%,80%{transform:translateX(8px)} }
+
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; width: 280px; }
+  .key {
+    height: 72px; border-radius: 14px; border: 1px solid var(--border);
+    background: var(--glass); backdrop-filter: blur(10px);
+    font-size: 22px; font-weight: 600; color: var(--text); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px;
+    transition: all .15s; user-select: none;
+  }
+  .key span.sub { font-size: 9px; letter-spacing: 2px; color: var(--muted); font-weight: 400; }
+  .key:active { background: var(--glass-b); transform: scale(.93); border-color: var(--cyan); }
+  .key.del { font-size: 18px; }
+  .key.empty { visibility: hidden; }
+
+  .pin-hint { font-size: 12px; color: var(--muted); text-align: center; }
+  .pin-error { font-size: 13px; color: var(--red); text-align: center; min-height: 20px; }
+
+  /* ══ MAIN SCREEN ══ */
+  #main-screen { justify-content: flex-start; padding: 0; }
+
+  .top-bar {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px 12px;
+    background: linear-gradient(to bottom, rgba(7,7,26,.9), transparent);
+    position: sticky; top: 0; z-index: 20;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .top-bar .left-group { display: flex; align-items: center; gap: 12px; }
+  .top-bar .brand { font-size: 18px; font-weight: 700; letter-spacing: 3px; background: linear-gradient(90deg, var(--cyan), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .status-badge {
+    display: flex; align-items: center; gap: 7px; padding: 5px 12px;
+    border-radius: 20px; background: var(--glass); border: 1px solid var(--border);
+    font-size: 12px; font-weight: 500; letter-spacing: .5px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .status-badge:active {
+    background: var(--glass-b);
+    border-color: var(--cyan);
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: all .3s; }
+  .status-dot.idle     { background: var(--green); box-shadow: 0 0 8px var(--green); animation: none; }
+  .status-dot.listening { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); animation: pulse 1s infinite; }
+  .status-dot.speaking  { background: var(--purple); box-shadow: 0 0 8px var(--purple); animation: pulse .6s infinite; }
+  .status-dot.processing { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: pulse .8s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .right-buttons { display: flex; align-items: center; gap: 10px; }
+  .top-btn { background: var(--glass); border: 1px solid var(--border); border-radius: 50%; width: 36px; height: 36px; color: var(--text); font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all .2s; }
+  .top-btn:active { background: var(--glass-b); border-color: var(--cyan); color: var(--cyan); }
+  .logout-btn { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+  .logout-btn:active { color: var(--red); }
+
+  /* ── Chat area ── */
+  #chat { flex: 1; overflow-y: auto; padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; width: 100%; overscroll-behavior: contain; }
+  #chat::-webkit-scrollbar { width: 3px; }
+  #chat::-webkit-scrollbar-track { background: transparent; }
+  #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .bubble { max-width: 85%; display: flex; flex-direction: column; gap: 4px; animation: slideUp .25s ease; }
+  @keyframes slideUp { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform: translateY(0); } }
+  .bubble.user { align-self: flex-end; }
+  .bubble.shin  { align-self: flex-start; }
+  .bubble-body { padding: 12px 16px; border-radius: 18px; font-size: 14px; line-height: 1.5; }
+  .bubble.user .bubble-body { background: linear-gradient(135deg, var(--purple), var(--cyan)); color: white; border-bottom-right-radius: 4px; }
+  .bubble.shin  .bubble-body { background: var(--glass); border: 1px solid var(--border); border-bottom-left-radius: 4px; backdrop-filter: blur(8px); }
+  .bubble-ts { font-size: 10px; color: var(--muted); padding: 0 4px; }
+  .bubble.user .bubble-ts { text-align: right; }
+
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); padding: 40px; text-align: center; }
+  .empty-state .icon { font-size: 48px; opacity: .3; }
+  .empty-state p { font-size: 14px; line-height: 1.6; }
+
+  /* ── Input area ── */
+  .input-area {
+    width: 100%; padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    background: rgba(7,7,26,.85);
+    backdrop-filter: blur(16px);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: flex-end; gap: 10px; z-index: 15;
+  }
+  #cmd-input {
+    flex: 1; background: var(--glass); border: 1px solid var(--border); border-radius: 22px;
+    padding: 12px 18px; color: var(--text); font-family: var(--font); font-size: 15px; resize: none;
+    max-height: 120px; line-height: 1.4; outline: none; transition: border-color .2s;
+  }
+  #cmd-input:focus { border-color: rgba(0,212,255,.4); }
+  #cmd-input::placeholder { color: var(--muted); }
+  .icon-btn {
+    width: 46px; height: 46px; border-radius: 50%; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+    flex-shrink: 0; transition: all .2s; position: relative;
+  }
+  #mic-btn { background: linear-gradient(135deg, var(--purple), var(--cyan)); color: white; }
+  #mic-btn.recording { background: linear-gradient(135deg, var(--red), var(--pink)); animation: pulse .6s infinite; }
+  #send-btn { background: linear-gradient(135deg, var(--cyan), var(--purple)); color: white; }
+  #send-btn:active, #mic-btn:active { transform: scale(.90); }
+
+  /* ── Typing indicator ── */
+  .typing-bubble { align-self: flex-start; }
+  .typing-body { display: flex; gap: 5px; padding: 14px 18px; background: var(--glass); border: 1px solid var(--border); border-radius: 18px; border-bottom-left-radius: 4px; }
+  .typing-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite; }
+  .typing-dot:nth-child(2) { animation-delay: .2s; }
+  .typing-dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-8px)} }
+
+  /* ── Suggestions ── */
+  .suggestions { display: flex; gap: 8px; padding: 0 16px 8px; overflow-x: auto; width: 100%; }
+  .suggestions::-webkit-scrollbar { display: none; }
+  .chip { white-space: nowrap; padding: 7px 14px; border-radius: 20px; background: var(--glass); border: 1px solid var(--border); font-size: 12px; color: var(--muted); cursor: pointer; transition: all .2s; }
+  .chip:active { background: var(--glass-b); color: var(--cyan); border-color: var(--cyan); }
+
+  /* ── Toast ── */
+  .toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); background: rgba(30,30,60,.95); border: 1px solid var(--border); border-radius: 12px; padding: 10px 20px; font-size: 13px; z-index: 100; backdrop-filter: blur(16px); transition: opacity .3s; pointer-events: none; white-space: nowrap; }
+  .toast.hidden { opacity: 0; }
+
+  /* ══ SLIDING COMMANDS DRAWER ══ */
+  .drawer-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    z-index: 30; opacity: 0; pointer-events: none; transition: opacity .3s ease;
+  }
+  .drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+  .drawer {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 80vh;
+    background: #09091f; border-top: 1px solid var(--border);
+    border-top-left-radius: 24px; border-top-right-radius: 24px;
+    z-index: 40; transform: translateY(100%); transition: transform .35s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
+  }
+  .drawer.open { transform: translateY(0); }
+
+  .drawer-header {
+    padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .drawer-title { font-size: 18px; font-weight: 600; background: linear-gradient(90deg, var(--cyan), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .drawer-close { background: var(--glass); border: none; font-size: 16px; color: var(--muted); cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .drawer-close:active { color: var(--text); background: var(--glass-b); }
+
+  .drawer-search-container { padding: 12px 20px; border-bottom: 1px solid var(--border); }
+  .drawer-search {
+    width: 100%; background: var(--glass); border: 1px solid var(--border); border-radius: 20px;
+    padding: 10px 16px; color: var(--text); font-family: var(--font); font-size: 14px; outline: none;
+    transition: all .2s;
+  }
+  .drawer-search:focus { border-color: var(--cyan); background: var(--glass-b); }
+
+  .drawer-content { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 20px; }
+  .category-section { display: flex; flex-direction: column; gap: 10px; }
+  .category-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--cyan); margin-bottom: 4px; }
+  
+  .cmd-item {
+    background: var(--glass); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    transition: all .2s; cursor: pointer;
+  }
+  .cmd-item:active { background: var(--glass-b); border-color: rgba(0,212,255,0.3); }
+  .cmd-info { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+  .cmd-text { font-size: 14px; font-weight: 500; color: var(--text); }
+  .cmd-desc { font-size: 11px; color: var(--muted); }
+  
+  .cmd-actions { display: flex; align-items: center; gap: 8px; }
+  .cmd-btn {
+    background: var(--glass); border: 1px solid var(--border); border-radius: 8px;
+    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; cursor: pointer; transition: all .2s;
+  }
+  .cmd-btn:active { background: var(--glass-b); color: var(--text); }
+  .cmd-btn.run { border-color: rgba(16,185,129,0.3); color: var(--green); }
+  .cmd-btn.run:active { background: rgba(16,185,129,0.1); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ LOGIN SCREEN ══════════════ -->
+<div class="screen" id="login-screen">
+  <div class="logo">
+    <div class="logo-orb"></div>
+    <h1>SHIN</h1>
+    <p>MOBILE COMPANION</p>
+  </div>
+
+  <div style="display:flex;flex-direction:column;align-items:center;gap:20px;width:100%">
+    <div class="pin-dots">
+      <div class="pin-dot" id="d0"></div>
+      <div class="pin-dot" id="d1"></div>
+      <div class="pin-dot" id="d2"></div>
+      <div class="pin-dot" id="d3"></div>
+    </div>
+    <p class="pin-hint">Enter your Shin PIN</p>
+    <p class="pin-error" id="pin-error"></p>
+  </div>
+
+  <div class="keypad" id="keypad">
+    <button class="key" onclick="keypad_press('1')">1<span class="sub"></span></button>
+    <button class="key" onclick="keypad_press('2')">2<span class="sub">ABC</span></button>
+    <button class="key" onclick="keypad_press('3')">3<span class="sub">DEF</span></button>
+    <button class="key" onclick="keypad_press('4')">4<span class="sub">GHI</span></button>
+    <button class="key" onclick="keypad_press('5')">5<span class="sub">JKL</span></button>
+    <button class="key" onclick="keypad_press('6')">6<span class="sub">MNO</span></button>
+    <button class="key" onclick="keypad_press('7')">7<span class="sub">PQRS</span></button>
+    <button class="key" onclick="keypad_press('8')">8<span class="sub">TUV</span></button>
+    <button class="key" onclick="keypad_press('9')">9<span class="sub">WXYZ</span></button>
+    <button class="key empty"></button>
+    <button class="key" onclick="keypad_press('0')">0</button>
+    <button class="key del" onclick="keypad_backspace()">⌫</button>
+  </div>
+</div>
+
+<!-- ══════════════ MAIN SCREEN ══════════════ -->
+<div class="screen hidden" id="main-screen">
+  <!-- Top bar -->
+  <div class="top-bar">
+    <div class="left-group">
+      <span class="brand">SHIN</span>
+      <div class="status-badge" onclick="toggleStateDrawer(true)" title="Change state/mode">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Connecting…</span>
+      </div>
+    </div>
+    <div class="right-buttons">
+      <button class="top-btn" onclick="toggleDrawer(true)" title="Command List">📋</button>
+      <button class="logout-btn" onclick="logout()" title="Logout">⏏</button>
+    </div>
+  </div>
+
+  <!-- Chat messages -->
+  <div id="chat">
+    <div class="empty-state" id="empty-state">
+      <div class="icon">🤖</div>
+      <p>Shin is ready.<br>Type a command or tap the mic to speak.</p>
+    </div>
+  </div>
+
+  <!-- Quick suggestions -->
+  <div class="suggestions" id="suggestions">
+    <span class="chip" onclick="sendChip(this)">What time is it?</span>
+    <span class="chip" onclick="sendChip(this)">Today's news</span>
+    <span class="chip" onclick="sendChip(this)">Nifty price</span>
+    <span class="chip" onclick="sendChip(this)">Bitcoin price</span>
+    <span class="chip" onclick="sendChip(this)">Play music</span>
+    <span class="chip" onclick="sendChip(this)">Take screenshot</span>
+    <span class="chip" onclick="sendChip(this)">What's the weather?</span>
+  </div>
+
+  <!-- Input area -->
+  <div class="input-area">
+    <textarea id="cmd-input" placeholder="Ask Shin anything…" rows="1" oninput="autoResize(this)" onkeydown="inputKeydown(event)"></textarea>
+    <button class="icon-btn" id="mic-btn" onclick="toggleMic()" title="Voice input">🎙️</button>
+    <button class="icon-btn" id="send-btn" onclick="sendCommand()" title="Send">➤</button>
+  </div>
+</div>
+
+<!-- ══ SLIDING COMMANDS DRAWER ══ -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="toggleDrawer(false)"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-header">
+    <span class="drawer-title">Shin Command List</span>
+    <button class="drawer-close" onclick="toggleDrawer(false)">✕</button>
+  </div>
+  <div class="drawer-search-container">
+    <input type="text" class="drawer-search" id="drawer-search" placeholder="Search commands..." oninput="searchCommands(this.value)">
+  </div>
+  <div class="drawer-content" id="drawer-content">
+    <!-- Categories & items will be rendered dynamically -->
+  </div>
+</div>
+
+<!-- ══ SLIDING STATE DRAWER ══ -->
+<div class="drawer-overlay" id="state-overlay" onclick="toggleStateDrawer(false)"></div>
+<div class="drawer" id="state-drawer" style="height: auto; max-height: 60vh;">
+  <div class="drawer-header">
+    <span class="drawer-title">Change Shin's Mode</span>
+    <button class="drawer-close" onclick="toggleStateDrawer(false)">✕</button>
+  </div>
+  <div class="drawer-content" style="padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+    <div class="cmd-item" onclick="changeMode('start listening')">
+      <div class="cmd-info">
+        <div class="cmd-text">🎙️ Listening Mode (Active)</div>
+        <div class="cmd-desc">Shin actively listens for voice commands or the wake word</div>
+      </div>
+    </div>
+    <div class="cmd-item" onclick="changeMode('pause listening')">
+      <div class="cmd-info">
+        <div class="cmd-text">💤 Standby Mode</div>
+        <div class="cmd-desc">Shin stands by quietly and ignores regular voice commands</div>
+      </div>
+    </div>
+    <div class="cmd-item" onclick="changeMode('quit assistant')" style="border-color: rgba(239, 68, 68, 0.25);">
+      <div class="cmd-info">
+        <div class="cmd-text" style="color: var(--red);">🛑 Shut Down Assistant</div>
+        <div class="cmd-desc">Safely shut down the Shin assistant process on your PC</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast hidden" id="toast"></div>
+
+<script>
+// ── Commands Database ────────────────────────────────────────────────────────
+const COMMAND_DATABASE = [
+  {
+    category: "🖐️ Hand Gestures",
+    commands: [
+      { text: "Start gesture control", desc: "Activate MediaPipe webcam hand gesture recognition" },
+      { text: "Stop gesture control", desc: "Turn off webcam hand gesture recognition" },
+      { text: "Toggle gesture control", desc: "Toggle camera gesture mode on/off" }
+    ]
+  },
+  {
+    category: "🖥️ App Control & Windows",
+    commands: [
+      { text: "Open Shin Web", desc: "Launch the main Shin 3D HUD & Web Dashboard in browser" },
+      { text: "Open Chrome", desc: "Launch Google Chrome browser" },
+      { text: "Open VS Code", desc: "Open Visual Studio Code" },
+      { text: "Open Notepad", desc: "Open Windows Notepad text editor" },
+      { text: "Open Calculator", desc: "Launch Windows Calculator" },
+      { text: "Open Spotify", desc: "Launch Spotify desktop app" },
+      { text: "Open Discord", desc: "Launch Discord chat client" },
+      { text: "Open WhatsApp", desc: "Launch WhatsApp desktop app" },
+      { text: "Close active window", desc: "Close the currently focused application" },
+      { text: "Minimize all", desc: "Minimize all windows (Show Desktop)" },
+      { text: "Maximize window", desc: "Maximize active window" },
+      { text: "Snap window left", desc: "Dock active window to left half" },
+      { text: "Snap window right", desc: "Dock active window to right half" },
+      { text: "Snap window to top left", desc: "Dock active window to top-left quadrant" },
+      { text: "Snap window to bottom right", desc: "Dock active window to bottom-right quadrant" },
+      { text: "Scroll up", desc: "Scroll active window upwards" },
+      { text: "Scroll down", desc: "Scroll active window downwards" },
+      { text: "List open windows", desc: "Show list of running windows and browser tabs" }
+    ]
+  },
+  {
+    category: "🔊 Volume & Audio",
+    commands: [
+      { text: "Volume up", desc: "Increase system volume by 10%" },
+      { text: "Volume down", desc: "Decrease system volume by 10%" },
+      { text: "Set volume to 50", desc: "Set volume to exactly 50%" },
+      { text: "Mute", desc: "Mute system audio" },
+      { text: "Unmute", desc: "Restore system audio" },
+      { text: "Lower Chrome's volume", desc: "Reduce audio volume for Chrome specifically" }
+    ]
+  },
+  {
+    category: "📺 Media & YouTube",
+    commands: [
+      { text: "Play music", desc: "Resume current media playback" },
+      { text: "Pause music", desc: "Pause current media playback" },
+      { text: "Next track", desc: "Skip to next song or video" },
+      { text: "Previous track", desc: "Go back to previous song or video" },
+      { text: "Play lo-fi on YouTube", desc: "Search and play lo-fi music on YouTube" },
+      { text: "Play Synthwave on Spotify", desc: "Search and play on Spotify" },
+      { text: "What's playing on Spotify?", desc: "Show current Spotify track info" }
+    ]
+  },
+  {
+    category: "👁️ Screen Intelligence & Vision",
+    commands: [
+      { text: "Take a screenshot", desc: "Capture system screenshot" },
+      { text: "Read my screen", desc: "OCR read visible screen text aloud" },
+      { text: "What's on screen?", desc: "AI visual analysis and description of screen" },
+      { text: "Summarize this code", desc: "Explain code or error on screen via AI vision" },
+      { text: "Find Submit on my screen", desc: "Search text coordinates on screen via OCR" }
+    ]
+  },
+  {
+    category: "🌤️ Weather & Time",
+    commands: [
+      { text: "What's the weather today?", desc: "Check current temperature & weather" },
+      { text: "Will it rain today?", desc: "Check 12-hour precipitation forecast" },
+      { text: "What is the time?", desc: "Spoken current local time" },
+      { text: "What's today's date?", desc: "Spoken date, day, and month" }
+    ]
+  },
+  {
+    category: "🔍 Search, Finance & Info",
+    commands: [
+      { text: "Nifty price", desc: "Get live NSE Nifty 50 index price" },
+      { text: "Sensex price", desc: "Get live BSE Sensex index price" },
+      { text: "Bitcoin price", desc: "Get live BTC exchange rate" },
+      { text: "Ethereum price", desc: "Get live ETH exchange rate" },
+      { text: "Solana price", desc: "Get live SOL crypto rate" },
+      { text: "Today's news", desc: "Check top global news headlines" },
+      { text: "News of India", desc: "Check top Indian news headlines" },
+      { text: "Search for Quantum Computing", desc: "Google search query" },
+      { text: "Tell me about Black Holes", desc: "Live AI knowledge query" },
+      { text: "Convert 100 km to miles", desc: "Instant unit conversion" },
+      { text: "How much is 50 dollars in rupees?", desc: "Live currency conversion" }
+    ]
+  },
+  {
+    category: "💬 WhatsApp & Messages",
+    commands: [
+      { text: "Open WhatsApp", desc: "Launch WhatsApp desktop app" },
+      { text: "Open Dad's WhatsApp", desc: "Open chat with contact via deep link" },
+      { text: "Send a message to Dad saying I am home", desc: "Send WhatsApp message with verbal confirmation" }
+    ]
+  },
+  {
+    category: "📝 Notes & Memory",
+    commands: [
+      { text: "Save a note: buy groceries", desc: "Save entry to Documents/Shin Notes" },
+      { text: "Remember that I like dark mode", desc: "Save personal fact into long-term memory" },
+      { text: "What do you remember about me?", desc: "List all stored facts & memories" },
+      { text: "Forget that I like dark mode", desc: "Delete stored memory entry" }
+    ]
+  },
+  {
+    category: "⏰ Reminders, Timers & To-Do",
+    commands: [
+      { text: "Remind me in 10 minutes to stretch", desc: "Set a voice timer reminder" },
+      { text: "Set a 25-minute Pomodoro timer", desc: "Start focus timer" },
+      { text: "Add buy groceries to my to-do list", desc: "Add task to list" },
+      { text: "What's on my to-do list?", desc: "List all pending tasks" },
+      { text: "Mark task 1 as complete", desc: "Mark a to-do item completed" }
+    ]
+  },
+  {
+    category: "📅 Calendar & Gmail",
+    commands: [
+      { text: "What's on my calendar today?", desc: "Fetch today's Google Calendar events" },
+      { text: "Add meeting tomorrow at 3 PM", desc: "Add event to Google Calendar" },
+      { text: "Read my emails", desc: "Read latest 5 unread Gmail messages" },
+      { text: "Do I have any emails?", desc: "Check unread email count" }
+    ]
+  },
+  {
+    category: "📋 Clipboard AI",
+    commands: [
+      { text: "Read clipboard", desc: "Read copied text aloud" },
+      { text: "Summarize clipboard", desc: "Get AI summary of copied text" },
+      { text: "Fix clipboard grammar", desc: "Correct copied text syntax & spelling" },
+      { text: "Rewrite clipboard to sound professional", desc: "AI rewrite of copied text" },
+      { text: "Translate clipboard to Spanish", desc: "Translate copied text" }
+    ]
+  },
+  {
+    category: "📶 Connectivity & Settings",
+    commands: [
+      { text: "Turn on Wi-Fi", desc: "Enable Wi-Fi adapter" },
+      { text: "Turn off Wi-Fi", desc: "Disable Wi-Fi adapter" },
+      { text: "Turn on Bluetooth", desc: "Enable Bluetooth radio" },
+      { text: "Turn off Bluetooth", desc: "Disable Bluetooth radio" },
+      { text: "Turn on airplane mode", desc: "Enable Windows Airplane Mode" },
+      { text: "Turn on night light", desc: "Enable Windows Night Light" },
+      { text: "Turn on mobile hotspot", desc: "Enable Windows Mobile Hotspot" },
+      { text: "Turn on nearby share", desc: "Enable Windows Nearby Sharing" }
+    ]
+  },
+  {
+    category: "⚡ System & PC Power",
+    commands: [
+      { text: "Check system status", desc: "Report CPU, RAM, battery, & temperature" },
+      { text: "Clean my PC", desc: "Empty recycle bin & clear temporary files" },
+      { text: "Brightness up", desc: "Increase screen brightness (+10%)" },
+      { text: "Brightness down", desc: "Decrease screen brightness (-10%)" },
+      { text: "Set brightness to 80", desc: "Set exact screen brightness" },
+      { text: "Lock screen", desc: "Lock Windows workstation" },
+      { text: "Sleep", desc: "Put PC to sleep mode" },
+      { text: "I'm going to sleep", desc: "Say good night and shut down PC in 10s" },
+      { text: "Shutdown the PC", desc: "Shut down computer (with confirmation)" },
+      { text: "Restart my PC", desc: "Restart computer (with confirmation)" }
+    ]
+  },
+  {
+    category: "🎓 Study Mode & Focus",
+    commands: [
+      { text: "Activate study mode", desc: "Start study focus tracking mode" },
+      { text: "Deactivate study mode", desc: "End study focus mode" },
+      { text: "Check study status", desc: "Show study duration & focus stats" }
+    ]
+  },
+  {
+    category: "🧩 Custom Routines & Shortcuts",
+    commands: [
+      { text: "Start morning routine", desc: "Execute morning macro routine" },
+      { text: "Activate focus mode", desc: "Execute focus mode macro" },
+      { text: "Activate dev mode", desc: "Execute developer environment macro" },
+      { text: "Start movie mode", desc: "Execute entertainment macro" },
+      { text: "Record a shortcut named study mode", desc: "Record custom macro sequence" },
+      { text: "List my shortcuts", desc: "Show all saved custom macros" }
+    ]
+  },
+  {
+    category: "🗣️ Hinglish & Conversation",
+    commands: [
+      { text: "Kaise ho?", desc: "Check in on Shin" },
+      { text: "Who are you?", desc: "Shin introduction" },
+      { text: "Who is your creator?", desc: "Shin credits creator MJ" },
+      { text: "Tell me a joke", desc: "Speak a programming joke" },
+      { text: "Hindi mein baat karo", desc: "Switch Shin's primary language to Hindi" },
+      { text: "Talk in English", desc: "Switch Shin's primary language to English" }
+    ]
+  }
+];
+
+// ── Config: auto-detect server URL ──────────────────────────────────────────
+const SERVER_URL = (() => {
+  const saved = localStorage.getItem('shin_server_url');
+  if (saved) return saved;
+  // Always use the window.location.origin where index.html was served.
+  // This automatically works for localhost:5055, LAN Wi-Fi (e.g. http://10.14.4.29:5055), and Cloudflare Tunnels.
+  return window.location.origin;
+})();
+
+let AUTH_TOKEN = localStorage.getItem('shin_token') || '';
+let pinBuffer  = '';
+let isRecording = false;
+let recognition = null;
+let sseSource   = null;
+let currentState = 'idle';
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, duration = 2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.add('hidden'), duration);
+}
+
+// ── PIN keypad ───────────────────────────────────────────────────────────────
+function keypad_press(digit) {
+  if (pinBuffer.length >= 4) return;
+  pinBuffer += digit;
+  updateDots();
+  if (pinBuffer.length === 4) submitPin();
+}
+function keypad_backspace() {
+  if (!pinBuffer.length) return;
+  pinBuffer = pinBuffer.slice(0, -1);
+  updateDots();
+  document.getElementById('pin-error').textContent = '';
+}
+function updateDots() {
+  for (let i = 0; i < 4; i++) {
+    const d = document.getElementById(`d${i}`);
+    d.classList.toggle('filled', i < pinBuffer.length);
+    d.classList.remove('error');
+  }
+}
+async function submitPin() {
+  const pin = pinBuffer;
+  try {
+    const res = await api('/auth', 'POST', { pin });
+    if (res.ok) {
+      AUTH_TOKEN = res.token;
+      localStorage.setItem('shin_token', AUTH_TOKEN);
+      showMain();
+    } else {
+      showPinError(res.error || 'Wrong PIN');
+    }
+  } catch (e) {
+    showPinError('Cannot reach Shin. Check server URL.');
+    console.error(e);
+  }
+}
+function showPinError(msg) {
+  pinBuffer = '';
+  for (let i = 0; i < 4; i++) {
+    const d = document.getElementById(`d${i}`);
+    d.classList.remove('filled');
+    d.classList.add('error');
+  }
+  document.getElementById('pin-error').textContent = msg;
+  setTimeout(() => {
+    for (let i = 0; i < 4; i++) document.getElementById(`d${i}`).classList.remove('error');
+    document.getElementById('pin-error').textContent = '';
+  }, 2000);
+}
+
+// ── Screen switching ─────────────────────────────────────────────────────────
+function showMain() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('main-screen').classList.remove('hidden');
+  renderCommandsList();
+  startSSE();
+  pollStatus();
+}
+function showLogin() {
+  pinBuffer = ''; updateDots();
+  document.getElementById('main-screen').classList.add('hidden');
+  document.getElementById('login-screen').classList.remove('hidden');
+  if (sseSource) { sseSource.close(); sseSource = null; }
+}
+
+async function logout() {
+  try { await api('/logout', 'POST', {}); } catch(_) {}
+  AUTH_TOKEN = '';
+  localStorage.removeItem('shin_token');
+  showLogin();
+}
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = {
+    method,
+    headers: {
+      'Content-Type':  'application/json',
+      'X-Auth-Token':  AUTH_TOKEN,
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(SERVER_URL + path, opts);
+  return res.json();
+}
+
+// ── Status polling ────────────────────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const res = await api('/status');
+    if (res.ok) setStatus(res.state);
+    else if (res.error === 'Unauthorised. Please log in.') { showLogin(); return; }
+  } catch(_) { setStatus('offline'); }
+  setTimeout(pollStatus, 8000);
+}
+function setStatus(state) {
+  currentState = state;
+  const dot  = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  const map = {
+    idle:       ['idle',       'Idle'],
+    listening:  ['listening',  'Listening…'],
+    speaking:   ['speaking',   'Speaking…'],
+    processing: ['processing', 'Processing…'],
+    standby:    ['idle',       'Standby'],
+    error:      ['',           'Error'],
+    offline:    ['',           'Offline'],
+  };
+  const [cls, label] = map[state] || ['', state];
+  dot.className = 'status-dot ' + cls;
+  text.textContent = label;
+}
+
+// ── SSE ──────────────────────────────────────────────────────────────────────
+function startSSE() {
+  if (sseSource) sseSource.close();
+  const url = `${SERVER_URL}/stream?token=${encodeURIComponent(AUTH_TOKEN)}`;
+  sseSource = new EventSource(url);
+  sseSource.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'transcript' && data.heard) {
+        addBubble('shin', data.response, data.ts);
+        removeTyping();
+      } else if (data.type === 'state') {
+        setStatus(data.state);
+      } else if (data.type === 'notification') {
+        showToast(`🔔 ${data.title}: ${data.message}`, 6000);
+        addBubble('shin', `${data.title}: ${data.message}`);
+      }
+    } catch(_) {}
+  };
+  sseSource.onerror = () => {
+    setStatus('offline');
+    setTimeout(startSSE, 5000);
+  };
+}
+
+// ── Chat bubbles ──────────────────────────────────────────────────────────────
+function addBubble(who, text, ts) {
+  document.getElementById('empty-state')?.remove();
+  const chat = document.getElementById('chat');
+  const bubble = document.createElement('div');
+  bubble.className = `bubble ${who}`;
+  bubble.innerHTML = `
+    <div class="bubble-body">${escHtml(text)}</div>
+    <span class="bubble-ts">${ts || now()}</span>
+  `;
+  chat.appendChild(bubble);
+  chat.scrollTop = chat.scrollHeight;
+}
+function addTyping() {
+  removeTyping();
+  const chat = document.getElementById('chat');
+  const t = document.createElement('div');
+  t.className = 'bubble typing-bubble'; t.id = 'typing';
+  t.innerHTML = '<div class="typing-body"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>';
+  chat.appendChild(t);
+  chat.scrollTop = chat.scrollHeight;
+}
+function removeTyping() {
+  document.getElementById('typing')?.remove();
+}
+function now() {
+  return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+// ── Send command ──────────────────────────────────────────────────────────────
+async function sendCommand(textOverride) {
+  const input = document.getElementById('cmd-input');
+  const text = (textOverride || input.value).trim();
+  if (!text) return;
+
+  input.value = ''; input.style.height = '';
+  addBubble('user', text);
+  addTyping();
+
+  try {
+    const res = await api('/command', 'POST', { text });
+    removeTyping();
+    if (res.ok) {
+      addBubble('shin', res.response || '✅ Done.');
+    } else if (res.error === 'Unauthorised. Please log in.') {
+      showLogin();
+    } else {
+      addBubble('shin', '⚠️ ' + (res.error || 'Something went wrong.'));
+    }
+  } catch(e) {
+    removeTyping();
+    addBubble('shin', '📡 Cannot reach Shin. Is it running?');
+  }
+}
+function sendChip(el) { sendCommand(el.textContent); }
+
+function inputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCommand(); }
+}
+function autoResize(el) {
+  el.style.height = '';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// ── Voice input ───────────────────────────────────────────────────────────────
+function toggleMic() {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { showToast('Speech recognition not supported in this browser.'); return; }
+
+  const btn = document.getElementById('mic-btn');
+  if (isRecording) {
+    recognition?.stop();
+    return;
+  }
+  recognition = new Rec();
+  recognition.lang = 'hi-IN';
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isRecording = true;
+    btn.classList.add('recording');
+    btn.textContent = '⏹️';
+    showToast('Listening…', 99999);
+  };
+  recognition.onresult = e => {
+    const text = e.results[0][0].transcript;
+    document.getElementById('toast').classList.add('hidden');
+    sendCommand(text);
+  };
+  recognition.onerror = e => showToast('Mic error: ' + e.error);
+  recognition.onend = () => {
+    isRecording = false;
+    btn.classList.remove('recording');
+    btn.textContent = '🎙️';
+    document.getElementById('toast').classList.add('hidden');
+  };
+  recognition.start();
+}
+
+// ── Drawer Management ─────────────────────────────────────────────────────────
+function toggleDrawer(show) {
+  document.getElementById('drawer').classList.toggle('open', show);
+  document.getElementById('drawer-overlay').classList.toggle('open', show);
+  if (show) {
+    document.getElementById('drawer-search').value = '';
+    searchCommands('');
+    document.getElementById('drawer-search').focus();
+  }
+}
+
+function renderCommandsList(filteredData = COMMAND_DATABASE) {
+  const container = document.getElementById('drawer-content');
+  container.innerHTML = '';
+  
+  if (filteredData.length === 0) {
+    container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;">No matching commands found.</div>';
+    return;
+  }
+
+  filteredData.forEach(cat => {
+    const sec = document.createElement('div');
+    sec.className = 'category-section';
+    
+    const title = document.createElement('div');
+    title.className = 'category-title';
+    title.textContent = cat.category;
+    sec.appendChild(title);
+    
+    cat.commands.forEach(cmd => {
+      const item = document.createElement('div');
+      item.className = 'cmd-item';
+      
+      const info = document.createElement('div');
+      info.className = 'cmd-info';
+      info.onclick = () => {
+        // Tapping selects/populates
+        document.getElementById('cmd-input').value = cmd.text;
+        toggleDrawer(false);
+        autoResize(document.getElementById('cmd-input'));
+      };
+      
+      const text = document.createElement('div');
+      text.className = 'cmd-text';
+      text.textContent = cmd.text;
+      
+      const desc = document.createElement('div');
+      desc.className = 'cmd-desc';
+      desc.textContent = cmd.desc;
+      
+      info.appendChild(text);
+      info.appendChild(desc);
+      item.appendChild(info);
+      
+      // Actions group
+      const actions = document.createElement('div');
+      actions.className = 'cmd-actions';
+      
+      // Run direct button
+      const runBtn = document.createElement('button');
+      runBtn.className = 'cmd-btn run';
+      runBtn.innerHTML = '➤';
+      runBtn.title = 'Run immediately';
+      runBtn.onclick = (e) => {
+        e.stopPropagation();
+        sendCommand(cmd.text);
+        toggleDrawer(false);
+      };
+      
+      actions.appendChild(runBtn);
+      item.appendChild(actions);
+      sec.appendChild(item);
+    });
+    
+    container.appendChild(sec);
+  });
+}
+
+function searchCommands(query) {
+  const q = query.toLowerCase().trim();
+  if (!q) {
+    renderCommandsList(COMMAND_DATABASE);
+    return;
+  }
+  
+  const filtered = [];
+  COMMAND_DATABASE.forEach(cat => {
+    const matches = cat.commands.filter(cmd => 
+      cmd.text.toLowerCase().includes(q) || 
+      cmd.desc.toLowerCase().includes(q)
+    );
+    if (matches.length > 0) {
+      filtered.push({
+        category: cat.category,
+        commands: matches
+      });
+    }
+  });
+  
+  renderCommandsList(filtered);
+}
+
+function toggleStateDrawer(show) {
+  document.getElementById('state-drawer').classList.toggle('open', show);
+  document.getElementById('state-overlay').classList.toggle('open', show);
+}
+
+function changeMode(command) {
+  toggleStateDrawer(false);
+  sendCommand(command);
+}
+
+// ── Server URL setup ──────────────────────────────────────────────────────────
+function promptServerUrl() {
+  const url = prompt('Enter Shin server URL (e.g. https://xxxx.trycloudflare.com):', SERVER_URL);
+  if (url && url.trim()) {
+    localStorage.setItem('shin_server_url', url.trim());
+    location.reload();
+  }
+}
+document.querySelector('.logo')?.addEventListener('contextmenu', e => {
+  e.preventDefault(); promptServerUrl();
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  // Prune invalid/stale cached URLs (e.g. old Cloudflare API endpoints or obsolete ports)
+  const cachedUrl = localStorage.getItem('shin_server_url');
+  if (cachedUrl && (cachedUrl.includes('api.trycloudflare.com') || cachedUrl.includes('update.trycloudflare.com'))) {
+    localStorage.removeItem('shin_server_url');
+  }
+
+  if (AUTH_TOKEN) {
+    try {
+      const res = await api('/status');
+      if (res.ok) { showMain(); return; }
+    } catch(_) {}
+    AUTH_TOKEN = '';
+    localStorage.removeItem('shin_token');
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+[
+    {
+        "id": 1,
+        "task": "Turn off bluetooth",
+        "done": false,
+        "created": "2026-06-17 13:13",
+        "completed_at": null
+    },
+    {
+        "id": 2,
+        "task": "Send a message in 10 minutes",
+        "done": false,
+        "created": "2026-06-21 18:45",
+        "completed_at": null
+    },
+    {
+        "id": 3,
+        "task": "Send a message to dad saying the user is home safe",
+        "done": false,
+        "created": "2026-06-21 19:11",
+        "completed_at": null
+    },
+    {
+        "id": 4,
+        "task": "Message to mum that I will be back in 10 minutes",
+        "done": false,
+        "created": "2026-06-21 19:23",
+        "completed_at": null
+    },
+    {
+        "id": 5,
+        "task": "Send a message to dad",
+        "done": false,
+        "created": "2026-06-21 19:23",
+        "completed_at": null
+    },
+    {
+        "id": 6,
+        "task": "Send message to mj saying \"I will be back\"",
+        "done": false,
+        "created": "2026-06-21 19:26",
+        "completed_at": null
+    },
+    {
+        "id": 7,
+        "task": "Say hello to my brother",
+        "done": false,
+        "created": "2026-06-21 21:47",
+        "completed_at": null
+    },
+    {
+        "id": 8,
+        "task": "Set alarm for 6:00 p.m.",
+        "done": false,
+        "created": "2026-07-08 15:10",
+        "completed_at": null
+    },
+    {
+        "id": 9,
+        "task": "Play a lyrics song on YouTube",
+        "done": false,
+        "created": "2026-07-24 10:01",
+        "completed_at": null
+    },
+    {
+        "id": 10,
+        "task": "Learn new things about laptops and commands",
+        "done": false,
+        "created": "2026-11-14 19:06",
+        "completed_at": null
+    }
+]

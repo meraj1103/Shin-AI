@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: shin-cloud-brain
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SHIN_API_KEY
+        generateValue: true

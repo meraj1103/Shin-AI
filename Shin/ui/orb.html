@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shin - Orb</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root,
+        html,
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: transparent !important;
+            background-color: transparent !important;
+            pointer-events: none;
+        }
+
+        /* -- Canvas -- */
+        #orb-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            transition:
+                opacity 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        #orb-canvas.orb-hidden {
+            opacity: 0;
+            transform: scale(0.35) rotate(25deg);
+        }
+
+        /* -- Drag Handle -- */
+        #orb-drag {
+            position: fixed;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            cursor: grab;
+            pointer-events: auto;
+            z-index: 10;
+            left: calc(50% - 130px);
+            top: calc(50% - 130px);
+            background: rgba(0, 0, 0, 0.01);
+        }
+
+        #orb-drag:active {
+            cursor: grabbing;
+        }
+
+        #orb-drag.orb-hidden {
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="orb-canvas"></canvas>
+    <div id="orb-drag" title="Drag to move, Scroll to resize, Right-click to hide"></div>
+
+    <script>
+        'use strict';
+
+        /* -- STATE CONFIG -- */
+        const STATES = {
+            standby: { r: 0, g: 255, b: 0, label: 'STANDBY', speed: 0.15, pulseHz: 1.5, pulseAmp: 0.022 },
+            idle: { r: 0, g: 0, b: 255, label: 'IDLE', speed: 0.38, pulseHz: 2.2, pulseAmp: 0.042 },
+            listening: { r: 255, g: 215, b: 0, label: 'LISTENING', speed: 1.60, pulseHz: 9.0, pulseAmp: 0.10 },
+            processing: { r: 255, g: 0, b: 0, label: 'PROCESSING', speed: 3.20, pulseHz: 13.5, pulseAmp: 0.065 },
+            speaking: { r: 14, g: 255, b: 248, label: 'SPEAKING', speed: 0.75, pulseHz: 15.5, pulseAmp: 0.13 },
+            error: { r: 0, g: 0, b: 0, label: 'ERROR', speed: 0.20, pulseHz: 4.0, pulseAmp: 0.03 },
+        };
+
+        let orbState = 'standby';
+        let orbVisible = true;
+        let wsPort = 8001;
+        let socket = null;
+
+        /* -- Canvas setup -- */
+        const canvas = document.getElementById('orb-canvas');
+        const ctx = canvas.getContext('2d');
+
+        let W = canvas.width = window.innerWidth;
+        let H = canvas.height = window.innerHeight;
+
+        /* Orb world position (centre of screen by default) */
+        let orbX = W / 2;
+        let orbY = H / 2;
+        let BASE_R = Math.min(W, H) * 0.14; // orb radius ~14% of viewport
+
+        /* -- Particles -- */
+        const PARTICLE_COUNT = 280;
+        const particles = Array.from({ length: PARTICLE_COUNT }, () => {
+            const phi = Math.random() * Math.PI * 2;
+            const cosT = Math.random() * 2 - 1;
+            const sinT = Math.sqrt(1 - cosT * cosT);
+            const r = 0.88 + Math.random() * 0.28;
+            return {
+                bx: r * sinT * Math.cos(phi),  // base unit-sphere coords
+                by: r * sinT * Math.sin(phi),
+                bz: r * cosT,
+                size: 0.8 + Math.random() * 1.4,
+                speed: 0.3 + Math.random() * 0.7,
+                phase: Math.random() * Math.PI * 2,
+            };
+        });
+
+        /* -- Icosahedron vertices (unit sphere) -- */
+        const PHI = (1 + Math.sqrt(5)) / 2;
+        const ICOSA_VERTS_RAW = [
+            [-1, PHI, 0], [1, PHI, 0], [-1, -PHI, 0], [1, -PHI, 0],
+            [0, -1, PHI], [0, 1, PHI], [0, -1, -PHI], [0, 1, -PHI],
+            [PHI, 0, -1], [PHI, 0, 1], [-PHI, 0, -1], [-PHI, 0, 1],
+        ].map(([x, y, z]) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; });
+
+        const ICOSA_EDGES = [
+            [0, 1], [0, 5], [0, 7], [0, 10], [0, 11],
+            [1, 5], [1, 7], [1, 8], [1, 9],
+            [2, 3], [2, 6], [2, 10], [2, 11], [2, 4],
+            [3, 4], [3, 6], [3, 8], [3, 9],
+            [4, 5], [4, 9], [4, 11],
+            [5, 9], [5, 11],
+            [6, 7], [6, 8], [6, 10],
+            [7, 8], [7, 10],
+            [8, 9], [10, 11],
+        ];
+
+        /* -- Torus ring definitions -- */
+        const RINGS = [
+            { r: 0.72, tilt: Math.PI / 2, tiltY: 0, speed: 0.28, base: 0.92 },
+            { r: 0.60, tilt: Math.PI / 3, tiltY: Math.PI / 5, speed: -0.19, base: 0.76 },
+            { r: 0.46, tilt: Math.PI / 4, tiltY: Math.PI / 4, speed: 0.35, base: 0.66 },
+            { r: 0.31, tilt: 0, tiltY: 0, speed: -0.42, base: 0.88 },
+            { r: 0.84, tilt: Math.PI / 6, tiltY: -Math.PI / 4, speed: 0.14, base: 0.40 },
+        ];
+
+        /* -- Energy arc pool -- */
+        const ARCS = Array.from({ length: 8 }, () => ({
+            ox: 0, oy: 0, ex: 0, ey: 0,
+            decay: 0, timer: Math.random() * 0.15,
+        }));
+
+        /* -- Hex accent angles -- */
+        const HEX_ANGLES = Array.from({ length: 6 }, (_, i) =>
+            (i / 6) * Math.PI * 2 + Math.PI / 6
+        );
+
+        /* -- MATH HELPERS -- */
+        function rotY(x, y, z, a) {
+            const c = Math.cos(a), s = Math.sin(a);
+            return [c * x + s * z, y, -s * x + c * z];
+        }
+        function rotX(x, y, z, a) {
+            const c = Math.cos(a), s = Math.sin(a);
+            return [x, c * y - s * z, s * y + c * z];
+        }
+        function rotZ(x, y, z, a) {
+            const c = Math.cos(a), s = Math.sin(a);
+            return [c * x - s * y, s * x + c * y, z];
+        }
+        function project(x, y, z, R, cx, cy) {
+            const fov = 3.6;
+            const scale = fov / (fov + z);
+            return [cx + x * R * scale, cy - y * R * scale, scale];
+        }
+
+        /* -- STATE COLOUR -- */
+        let curR = 255, curG = 140, curB = 0;
+        let tgtR = 255, tgtG = 140, tgtB = 0;
+
+        function setState(s) {
+            const cfg = STATES[s] || STATES.standby;
+            orbState = s;
+            tgtR = cfg.r; tgtG = cfg.g; tgtB = cfg.b;
+            const lbl = document.getElementById('orb-state');
+            if (lbl) lbl.textContent = `SHIN // ${cfg.label}`;
+            updateToggleColor();
+        }
+
+        function updateToggleColor() {
+            const lbl = document.getElementById('orb-state');
+            if (lbl) lbl.style.color = `rgba(${tgtR},${tgtG},${tgtB},0.55)`;
+        }
+
+        /* -- DRAW HELPERS -- */
+        function rgba(alpha) {
+            return `rgba(${Math.round(curR)},${Math.round(curG)},${Math.round(curB)},${alpha})`;
+        }
+
+        function drawGlowCircle(cx, cy, r, alpha, blur) {
+            ctx.save();
+            ctx.shadowBlur = blur;
+            ctx.shadowColor = rgba(1);
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.fillStyle = rgba(0.08);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawRing(cx, cy, R, ringDef, t, alpha, tiltXVal = 0, tiltYVal = 0) {
+            const segs = 128;
+            const tilt = ringDef.tilt + tiltXVal * 0.15;
+            const tiltY = ringDef.tiltY + t * ringDef.speed + tiltYVal * 0.15;
+            const r = ringDef.r;
+
+            ctx.save();
+            ctx.globalAlpha = alpha * ringDef.base;
+            ctx.strokeStyle = rgba(1);
+            ctx.lineWidth = 1.2;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = rgba(0.6);
+            ctx.beginPath();
+
+            let first = true;
+            for (let i = 0; i <= segs; i++) {
+                const a = (i / segs) * Math.PI * 2;
+                let x = Math.cos(a) * r;
+                let y = Math.sin(a) * r;
+                let z = 0;
+                let [rx, ry, rz] = rotX(x, y, z, tilt);
+                [rx, ry, rz] = rotY(rx, ry, rz, tiltY);
+
+                const [sx, sy] = project(rx, ry, rz, R, cx, cy);
+                if (first) { ctx.moveTo(sx, sy); first = false; }
+                else ctx.lineTo(sx, sy);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawIcosaWire(cx, cy, R, rotYA, rotXA, alpha) {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = rgba(1);
+            ctx.lineWidth = 0.7;
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = rgba(0.4);
+
+            for (const [ai, bi] of ICOSA_EDGES) {
+                let [ax, ay, az] = ICOSA_VERTS_RAW[ai];
+                let [bx, by, bz] = ICOSA_VERTS_RAW[bi];
+                [ax, ay, az] = rotY(ax, ay, az, rotYA);
+                [ax, ay, az] = rotX(ax, ay, az, rotXA);
+                [bx, by, bz] = rotY(bx, by, bz, rotYA);
+                [bx, by, bz] = rotX(bx, by, bz, rotXA);
+
+                const [sx1, sy1] = project(ax, ay, az, R, cx, cy);
+                const [sx2, sy2] = project(bx, by, bz, R, cx, cy);
+                ctx.beginPath();
+                ctx.moveTo(sx1, sy1);
+                ctx.lineTo(sx2, sy2);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = rgba(1);
+            ctx.shadowBlur = 10;
+            for (const [vx, vy, vz] of ICOSA_VERTS_RAW) {
+                let [x, y, z] = rotY(vx, vy, vz, rotYA);
+                [x, y, z] = rotX(x, y, z, rotXA);
+                const [sx, sy, sc] = project(x, y, z, R, cx, cy);
+                ctx.globalAlpha = alpha * (0.5 + sc * 0.5);
+                ctx.beginPath();
+                ctx.arc(sx, sy, 2.2 * sc, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawScanRing(cx, cy, R, t, alpha) {
+            const scanY = Math.sin(t * 0.62) * 0.88;
+            const scanR = Math.sqrt(Math.max(0.001, 1 - scanY * scanY)) * 0.98;
+            const segs = 192;
+
+            ctx.save();
+            ctx.globalAlpha = alpha * 0.55 * (1 - Math.abs(scanY) * 0.65);
+            ctx.strokeStyle = rgba(1);
+            ctx.lineWidth = 1.0;
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = rgba(0.8);
+            ctx.beginPath();
+
+            let first = true;
+            for (let i = 0; i <= segs; i++) {
+                const a = (i / segs) * Math.PI * 2;
+                const px = Math.cos(a) * scanR;
+                const py = scanY;
+                const pz = Math.sin(a) * scanR;
+                const [sx, sy] = project(px, py, pz, R, cx, cy);
+                if (first) { ctx.moveTo(sx, sy); first = false; }
+                else ctx.lineTo(sx, sy);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawParticles(cx, cy, R, rotYA, rotXA, t, alpha) {
+            ctx.save();
+            ctx.shadowBlur = 6;
+            ctx.shadowColor = rgba(0.8);
+
+            for (const p of particles) {
+                const a = t * p.speed * 0.4 + p.phase;
+                let [x, y, z] = rotY(p.bx, p.by, p.bz, a * 0.3);
+                [x, y, z] = rotX(x, y, z, a * 0.18);
+                [x, y, z] = rotY(x, y, z, rotYA);
+                [x, y, z] = rotX(x, y, z, rotXA);
+                const [sx, sy, sc] = project(x, y, z, R, cx, cy);
+                const brightness = 0.4 + sc * 0.6;
+                ctx.globalAlpha = alpha * brightness * 0.7;
+                ctx.fillStyle = rgba(1);
+                ctx.beginPath();
+                ctx.arc(sx, sy, p.size * sc, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawCore(cx, cy, R, t, cfg, pulse) {
+            for (let i = 4; i >= 0; i--) {
+                const rr = R * (0.35 - i * 0.06) * pulse;
+                const ga = new Float64Array([0.03, 0.05, 0.08, 0.14, 0.22])[i];
+                const blur = [40, 28, 18, 10, 5][i];
+                drawGlowCircle(cx, cy, rr, ga, blur);
+            }
+
+            const corePulse = 1 + Math.sin(t * cfg.pulseHz * 1.6) * 0.38;
+            const coreR = R * 0.072 * corePulse;
+            ctx.save();
+            ctx.shadowBlur = 24;
+            ctx.shadowColor = 'rgba(255,255,255,0.9)';
+            ctx.globalAlpha = 0.92;
+
+            const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+            cg.addColorStop(0, 'rgba(255,255,255,1)');
+            cg.addColorStop(0.5, rgba(0.9));
+            cg.addColorStop(1, rgba(0));
+            ctx.fillStyle = cg;
+            ctx.beginPath();
+            ctx.arc(cx, cy, coreR * 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            const cl = R * 0.22 * corePulse;
+            ctx.save();
+            ctx.globalAlpha = 0.35;
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.lineWidth = 0.8;
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = 'rgba(255,255,255,0.5)';
+            ctx.beginPath();
+            ctx.moveTo(cx - cl, cy); ctx.lineTo(cx + cl, cy);
+            ctx.moveTo(cx, cy - cl); ctx.lineTo(cx, cy + cl);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawOuterGlow(cx, cy, R, alpha) {
+            const grad = ctx.createRadialGradient(cx, cy, R * 0.85, cx, cy, R * 1.45);
+            grad.addColorStop(0, rgba(0.0));
+            grad.addColorStop(0.4, rgba(0.12));
+            grad.addColorStop(0.75, rgba(0.28));
+            grad.addColorStop(1, rgba(0.0));
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(cx, cy, R * 1.45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawEnergyArcs(cx, cy, R, t, delta, cfg) {
+            const active = (orbState === 'listening' || orbState === 'speaking' || orbState === 'processing');
+            for (const arc of ARCS) {
+                if (active) {
+                    arc.timer -= delta;
+                    if (arc.timer <= 0) {
+                        arc.timer = 0.06 + Math.random() * 0.14;
+                        arc.decay = 1.0;
+                        const phi = Math.random() * Math.PI * 2;
+                        const theta = Math.acos(Math.random() * 2 - 1);
+                        const sx = Math.sin(theta) * Math.cos(phi);
+                        const sy = Math.sin(theta) * Math.sin(phi);
+                        const [ox, oy] = project(sx, sy, Math.cos(theta), R, cx, cy);
+                        const ext = (0.12 + Math.random() * 0.2);
+                        const [ex, ey] = project(sx * (1 + ext), sy * (1 + ext), Math.cos(theta) * (1 + ext), R, cx, cy);
+                        arc.ox = ox; arc.oy = oy;
+                        arc.ex = ex; arc.ey = ey;
+                    }
+                    if (arc.decay > 0) {
+                        ctx.save();
+                        ctx.globalAlpha = arc.decay * 0.85;
+                        ctx.strokeStyle = rgba(1);
+                        ctx.lineWidth = 1.2;
+                        ctx.shadowBlur = 14;
+                        ctx.shadowColor = rgba(0.9);
+                        ctx.beginPath();
+                        ctx.moveTo(arc.ox, arc.oy);
+                        ctx.lineTo(arc.ex, arc.ey);
+                        ctx.stroke();
+                        ctx.restore();
+                        arc.decay -= delta * 1.6;
+                    }
+                } else {
+                    arc.decay = 0;
+                }
+            }
+        }
+
+        /* -- Main Animation loop -- */
+        let lastTime = performance.now();
+        let totalTime = 0;
+
+        let targetRotY = 0, currentRotY = 0;
+        let targetRotX = 0, currentRotX = 0;
+
+        let targetManRotY = 0, currentManRotY = 0;
+        let targetManRotX = 0, currentManRotX = 0;
+
+        function animate(now) {
+            requestAnimationFrame(animate);
+
+            const delta = Math.min(0.08, (now - lastTime) / 1000);
+            lastTime = now;
+
+            const cfg = STATES[orbState] || STATES.standby;
+            totalTime += delta * cfg.speed;
+
+            ctx.clearRect(0, 0, W, H);
+
+            if (!orbVisible) {
+                updateGeometryToPython();
+                return;
+            }
+
+            curR += (tgtR - curR) * 0.085;
+            curG += (tgtG - curG) * 0.085;
+            curB += (tgtB - curB) * 0.085;
+
+            targetRotY += delta * 0.22;
+            targetRotX = Math.sin(totalTime * 0.5) * 0.15;
+
+            currentRotY += (targetRotY - currentRotY) * 0.1;
+            currentRotX += (targetRotX - currentRotX) * 0.1;
+
+            currentManRotY += (targetManRotY - currentManRotY) * 0.15;
+            currentManRotX += (targetManRotX - currentManRotX) * 0.15;
+
+            const finalRotY = currentRotY + currentManRotY;
+            const finalRotX = currentRotX + currentManRotX;
+
+            // Smoothly interpolate current mouse norm towards target mouse norm
+            mouseNormX += (targetMouseX - mouseNormX) * 0.12;
+            mouseNormY += (targetMouseY - mouseNormY) * 0.12;
+
+            const tiltX = -mouseNormY * 0.38; // Increased slightly for a more visible look
+            const tiltY = mouseNormX * 0.38;
+
+            const compositeRotX = finalRotX + tiltX;
+            const compositeRotY = finalRotY + tiltY;
+
+            const pulse = 1 + Math.sin(totalTime * cfg.pulseHz) * cfg.pulseAmp;
+
+            drawOuterGlow(orbX, orbY, BASE_R, 0.42);
+            drawCore(orbX, orbY, BASE_R, totalTime, cfg, pulse);
+            drawScanRing(orbX, orbY, BASE_R, totalTime, 0.88);
+            drawRing(orbX, orbY, BASE_R, RINGS[0], totalTime, 0.65, tiltX, tiltY);
+            drawRing(orbX, orbY, BASE_R, RINGS[1], totalTime, 0.65, tiltX, tiltY);
+            drawRing(orbX, orbY, BASE_R, RINGS[2], totalTime, 0.65, tiltX, tiltY);
+            drawRing(orbX, orbY, BASE_R, RINGS[3], totalTime, 0.65, tiltX, tiltY);
+            drawRing(orbX, orbY, BASE_R, RINGS[4], totalTime, 0.65, tiltX, tiltY);
+            drawIcosaWire(orbX, orbY, BASE_R, compositeRotY, compositeRotX, 0.82);
+            drawParticles(orbX, orbY, BASE_R, compositeRotY, compositeRotX, totalTime, 0.90);
+            drawEnergyArcs(orbX, orbY, BASE_R, totalTime, delta, cfg);
+
+            // Dynamically position and size the drag handle
+            const dragSize = BASE_R * 2.4;
+            dragEl.style.width = `${dragSize}px`;
+            dragEl.style.height = `${dragSize}px`;
+            dragEl.style.left = `${orbX - dragSize / 2}px`;
+            dragEl.style.top = `${orbY - dragSize / 2}px`;
+
+            updateGeometryToPython();
+        }
+
+        /* -- INTERACTIONS -- */
+        const dragEl = document.getElementById('orb-drag');
+        let dragging = false;
+        let rotating = false;
+        let dragLast = { x: 0, y: 0 };
+        let didRotate = false;
+
+        let mouseNormX = 0, mouseNormY = 0;
+        let targetMouseX = 0, targetMouseY = 0;
+
+        dragEl.addEventListener('mousedown', e => {
+            didRotate = false;
+            dragLast = { x: e.clientX, y: e.clientY };
+            if (e.button === 0) {
+                if (e.shiftKey) {
+                    rotating = true;
+                    dragEl.style.cursor = 'crosshair';
+                } else {
+                    dragging = true;
+                    dragEl.style.cursor = 'grabbing';
+                }
+            }
+        });
+
+        dragEl.addEventListener('wheel', e => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.08 : 0.92;
+            const newR = BASE_R * factor;
+            if (newR >= 30 && newR <= 450) {
+                BASE_R = newR;
+            }
+        }, { passive: false });
+
+        window.addEventListener('mousemove', e => {
+            const dx = e.clientX - dragLast.x;
+            const dy = e.clientY - dragLast.y;
+            dragLast = { x: e.clientX, y: e.clientY };
+
+            if (dragging) {
+                orbX += dx;
+                orbY += dy;
+            } else if (rotating) {
+                targetManRotY += dx * 0.012;
+                targetManRotX -= dy * 0.012;
+                if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                    didRotate = true;
+                }
+            } else {
+                targetMouseX = Math.max(-1, Math.min(1, (e.clientX - orbX) / (BASE_R * 4.0)));
+                targetMouseY = Math.max(-1, Math.min(1, (e.clientY - orbY) / (BASE_R * 4.0)));
+            }
+        });
+
+        window.addEventListener('mouseup', e => {
+            dragging = rotating = false;
+            dragEl.style.cursor = 'grab';
+
+            // Support for Electron click-through overlay on release
+            if (window.electronAPI) {
+                const rect = dragEl.getBoundingClientRect();
+                const isInside = (
+                    e.clientX >= rect.left &&
+                    e.clientX <= rect.right &&
+                    e.clientY >= rect.top &&
+                    e.clientY <= rect.bottom
+                );
+                if (!isInside) {
+                    window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+                }
+            }
+        });
+
+        // Support for Electron click-through overlay on hover
+        dragEl.addEventListener('mouseenter', () => {
+            if (window.electronAPI) {
+                window.electronAPI.setIgnoreMouseEvents(false);
+            }
+        });
+
+        dragEl.addEventListener('mouseleave', () => {
+            if (window.electronAPI && !dragging && !rotating) {
+                window.electronAPI.setIgnoreMouseEvents(true, { forward: true });
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            targetMouseX = 0;
+            targetMouseY = 0;
+        });
+
+        // Expose the global mouse move tracking listener in Electron environment
+        if (window.electronAPI && window.electronAPI.onGlobalMouseMove) {
+            window.electronAPI.onGlobalMouseMove(point => {
+                if (!dragging && !rotating) {
+                    targetMouseX = Math.max(-1, Math.min(1, (point.x - orbX) / (BASE_R * 4.0)));
+                    targetMouseY = Math.max(-1, Math.min(1, (point.y - orbY) / (BASE_R * 4.0)));
+                }
+            });
+        }
+
+        /* -- VISIBILITY TOGGLE -- */
+        function sendWSMessage(data) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(data));
+            }
+        }
+
+        function toggleOrb(byUser = false) {
+            orbVisible = !orbVisible;
+            const cvs = document.getElementById('orb-canvas');
+            if (orbVisible) {
+                cvs.classList.remove('orb-hidden');
+                dragEl.classList.remove('orb-hidden');
+                if (byUser) sendWSMessage({ type: 'orb_shown_by_user' });
+            } else {
+                cvs.classList.add('orb-hidden');
+                dragEl.classList.add('orb-hidden');
+                if (byUser) sendWSMessage({ type: 'orb_hidden_by_user' });
+            }
+            updateGeometryToPython();
+        }
+
+        // Hide on right-click without drag
+        dragEl.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            if (!didRotate) {
+                toggleOrb(true);
+            }
+        });
+
+        document.addEventListener('keydown', e => {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
+                e.preventDefault();
+                toggleOrb(true);
+            }
+        });
+
+        /* -- WEBSOCKET -- */
+        async function resolvePort() {
+            try {
+                const r = await fetch('/api/config');
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.ws_port) wsPort = d.ws_port;
+                }
+            } catch (_) { }
+            connectWS();
+        }
+
+        function connectWS() {
+            try {
+                socket = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+                socket.onopen = () => setState('idle');
+                socket.onmessage = e => {
+                    try {
+                        const d = JSON.parse(e.data);
+                        if (d.type === 'state') setState(d.state);
+                        if (d.type === 'orb_hide' && orbVisible) toggleOrb(false);
+                        if (d.type === 'orb_show' && !orbVisible) toggleOrb(false);
+                    } catch (_) { }
+                };
+                socket.onclose = () => { setState('standby'); setTimeout(connectWS, 3000); };
+                socket.onerror = () => socket.close();
+            } catch (_) { setTimeout(connectWS, 3000); }
+        }
+
+        resolvePort();
+
+        /* -- RESIZE -- */
+        window.addEventListener('resize', () => {
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+            orbX = W / 2;
+            orbY = H / 2;
+        });
+
+        // Python Integration Geometry Sync
+        let lastSentX = null;
+        let lastSentY = null;
+        let lastSentR = null;
+
+        function updateGeometryToPython() {
+            if (window.pywebview && window.pywebview.api) {
+                const currentR = orbVisible ? (BASE_R * 2.4 / 2) : 0;
+                if (orbX !== lastSentX || orbY !== lastSentY || currentR !== lastSentR) {
+                    window.pywebview.api.update_geometry(orbX, orbY, currentR);
+                    lastSentX = orbX;
+                    lastSentY = orbY;
+                    lastSentR = currentR;
+                }
+            }
+        }
+
+        // Apply initial state
+        setState('standby');
+        requestAnimationFrame(animate);
+    </script>
+</body>
+
+</html>

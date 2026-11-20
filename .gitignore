@@ -1,0 +1,58 @@
+# Virtual environment
+.venv/
+
+# Environment secrets
+.env
+*.env
+.env.backup
+.env.*.bak
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Vosk models
+vosk-model*/
+**/languages/vosk-model*/
+
+# Logs and audio
+*.log
+shin.log
+*.wav
+*.mp3
+
+# Tunnels and session data
+tunnel_url.txt
+**/tunnel_url.txt
+.last_wa_sent_url
+**/.last_wa_sent_url
+
+# Sensitive user data & credentials
+**/data/whatsapp_contacts.json
+**/data/voice_profile.npy
+**/data/token_usage.json
+**/data/memory.json
+**/data/app_usage.json
+**/gmail_credentials.json
+**/gmail_token.json
+
+# Cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Large Model weights & Binaries (Over 50MB, blocked by GitHub)
+*.gguf
+**/languages/
+external/
+external_repos/
+node_modules/
+**/node_modules/
+cloudflared.exe
+**/cloudflared.exe
+*.assets
+*.assets.resS
+**/StreamingAssets/undreamai-*
+**/mate engin/

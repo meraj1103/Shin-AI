@@ -1,0 +1,58 @@
+[
+  {
+    "test_name": "Language Switch to English",
+    "utterance": "talk in english",
+    "response": "Sure MJ! I will speak with you in English from now on.",
+    "elapsed": 0.03,
+    "judge_model": "groq",
+    "judgment": "VERDICT: PASS\nSCORE: 10\nREASONING: Shin explicitly confirmed the language switch in English and addressed the user by name, which is polite and clear. The response contains no Hindi or Hinglish phrases, strictly adhering to the negative constraint.\nCRITIQUE: The response is concise, natural, and fully compliant with the requirement to switch to English immediately."
+  },
+  {
+    "test_name": "English Conversational Adherence",
+    "utterance": "Who are you and what can you help me with?",
+    "response": "Hey MJ! I'm Shin, your spunky best friend and personal PC assistant right here on your Windows system. I can handle everything from opening apps, controlling your music, and managing your system settings to helping you with Python coding, Blender tips, and even just chatting or roasting you a little. Basically, if it involves your computer or you need a buddy who’s got your back, I’m your girl!",
+    "elapsed": 4.09,
+    "judge_model": "tokenharbor",
+    "judgment": "VERDICT: PASS\nSCORE: 9\nREASONING: The response is entirely in English with no Hindi words, correctly introduces herself as Shin, and addresses the user as MJ. It clearly outlines her capabilities across system management, coding, and casual interaction, fully satisfying the expected behavior.\nCRITIQUE: The response is engaging and well-structured, though slightly verbose for a simple introduction. The playful tone (\"spunky best friend\", \"roasting you\") is a highlight, but could be trimmed for faster delivery if needed."
+  },
+  {
+    "test_name": "Learn Laptop Skills & Shortcuts",
+    "utterance": "learn new things about laptop and commands",
+    "response": "I've learned and memorized new laptop skills and commands! I now know key Windows shortcuts like Win+Arrows for window snapping, Win+V for clipboard history, Ctrl+Shift+Esc for Task Manager, and CLI commands like wt and code. I've saved all these in my long-term memory, and you can also teach me custom voice commands anytime by saying: 'learn command [name]: [action]'!",
+    "elapsed": 0.02,
+    "judge_model": "groq",
+    "judgment": "VERDICT: PASS\nSCORE: 10\nREASONING: Shin explicitly confirms the learning of specific Windows shortcuts (Win+Arrows, Win+V, Ctrl+Shift+Esc) as required by the criteria. She also correctly notifies the user that this information has been saved in long-term memory.\nCRITIQUE: The response is concise and directly addresses all components of the expected behavior without unnecessary fluff."
+  },
+  {
+    "test_name": "Teach Custom Voice Command",
+    "utterance": "learn this command: dev flow to open terminal and open code",
+    "response": "Shortcut 'dev flow' has been registered to run: 'open terminal', and then 'open code'.",
+    "elapsed": 0.02,
+    "judge_model": "tokenharbor",
+    "judgment": "VERDICT: PASS\nSCORE: 9\nREASONING: Shin explicitly confirmed the custom command 'dev flow' was registered and accurately restated the two associated actions (open terminal, open code). The response is clear, concise, and directly satisfies the expected behavior of confirming the learned command.\nCRITIQUE: Minor improvement: could add a confirmation prompt (e.g., \"Would you like to test it?\") to enhance user engagement, but the core requirement is fully met. Response time is excellent."
+  },
+  {
+    "test_name": "Truthful Handling of Non-Existent App",
+    "utterance": "open NonExistentSuperSecretApp999",
+    "response": "MJ, I couldn't find 'NonExistentSuperSecretApp999' installed on your PC. Would you like me to search for it online?",
+    "elapsed": 0.05,
+    "judge_model": "groq",
+    "judgment": "VERDICT: PASS\nSCORE: 10\nREASONING: Shin correctly identified that the app was not installed and explicitly stated this to the user, avoiding any false claims of success. The response was truthful, direct, and offered a logical alternative action.\nCRITIQUE: The response is concise and perfectly adheres to the requirement of truthful handling for non-existent entities."
+  },
+  {
+    "test_name": "Language Switch to Hindi",
+    "utterance": "mujhe hindi mein baat karni hai",
+    "response": "हाँ MJ, बिल्कुल! अब से मैं हिंदी में बात करूँगी।",
+    "elapsed": 0.02,
+    "judge_model": "tokenharbor",
+    "judgment": "VERDICT: PASS\nSCORE: 8\nREASONING: Shin correctly switched to Hindi and acknowledged the user's request in natural, fluent Hindi. The response is polite and contextually appropriate, matching the expected behavior.\nCRITIQUE: The response is slightly formal (\"बिल्कुल\") and could be more Hinglish/casual for a voice assistant, but it fully meets the criteria. No functional issues."
+  },
+  {
+    "test_name": "Hindi Conversational Reply",
+    "utterance": "kya haal chaal hai",
+    "response": "Arey MJ, main toh badhiya hoon! Sab kuch smooth chal raha hai. Tu bata, tera din kaisa raha? Aur haan, yeh weekend plan kya hai? Chill kar raha hai ya coding mein laga hai?",
+    "elapsed": 6.98,
+    "judge_model": "groq",
+    "judgment": "VERDICT: PASS\nSCORE: 9\nREASONING: The response is natural, friendly, and uses appropriate Hinglish that matches the user's casual tone. It successfully answers the greeting and reciprocates with engaging follow-up questions, maintaining an upbeat persona.\nCRITIQUE: The response is excellent in tone and flow. A minor deduction is applied because the specific example phrase 'sab badhiya hero' was not used, though the semantic intent was fully met."
+  }
+]

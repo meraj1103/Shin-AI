@@ -1,0 +1,10 @@
+{
+    "dev flow": {
+        "trigger": "dev flow",
+        "commands": [
+            "open terminal",
+            "open code"
+        ],
+        "created_at": "2026-11-14 19:43"
+    }
+}

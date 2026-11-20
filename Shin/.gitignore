@@ -1,0 +1,49 @@
+# Virtual environment
+.venv/
+
+# Environment secrets — NEVER commit this
+.env
+.env.backup
+.env.*.bak
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Vosk model (large binary, download separately)
+vosk-model*/
+languages/vosk-model*/
+
+# Logs and temp files
+*.log
+shin.log
+friday.log
+orb_window.log
+_friday_tts_tmp.*
+*.wav
+*.mp3
+
+# Tunnels and session state
+tunnel_url.txt
+.last_wa_sent_url
+
+# Credentials and sensitive user data
+data/whatsapp_contacts.json
+data/voice_profile.npy
+data/token_usage.json
+data/memory.json
+data/app_usage.json
+gmail_credentials.json
+gmail_token.json
+
+# Pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+Thumbs.db
+.DS_Store
+

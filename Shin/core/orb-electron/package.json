@@ -1,0 +1,12 @@
+{
+  "name": "shin-orb",
+  "version": "1.0.0",
+  "description": "Shin desktop orb overlay in Electron",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^31.0.0"
+  }
+}
