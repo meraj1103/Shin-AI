@@ -185,15 +185,20 @@ class MultiProviderLLMRouter:
         return discovered
 
     def is_online(self) -> bool:
-        """Fast non-blocking connectivity check."""
-        try:
-            socket.setdefaulttimeout(1.2)
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect(("1.1.1.1", 53))
-            s.close()
+        """Fast non-blocking connectivity check with cloud environment and HTTPS fallback."""
+        # Cloud environments (Railway, Render, Fly, VPS) are always online
+        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_STATIC_URL") or os.getenv("PORT") or os.getenv("SHIN_CLOUD_BRAIN"):
             return True
-        except Exception:
-            return False
+        for host, port in [("www.google.com", 443), ("api.groq.com", 443), ("1.1.1.1", 53), ("8.8.8.8", 53)]:
+            try:
+                socket.setdefaulttimeout(1.2)
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((host, port))
+                s.close()
+                return True
+            except Exception:
+                continue
+        return False
 
     def query(
         self,
@@ -209,31 +214,30 @@ class MultiProviderLLMRouter:
             {"role": "assistant", "content": "...", "provider": "...", "tool_calls": [...]}
         """
         self._load_config()
-        online = self.is_online()
 
         # Build candidate providers in priority order (Groq & TokenHarbor prioritized for speed & free tier)
         providers = []
-        if online:
-            if self.groq_key and is_provider_available("groq"):
-                providers.append("groq")
-            if self.tokenharbor_key and is_provider_available("tokenharbor"):
-                providers.append("tokenharbor")
-            if self.gemini_key and is_provider_available("gemini"):
-                providers.append("gemini")
-            if self.openai_key and is_provider_available("openai"):
-                providers.append("openai")
-            if self.anthropic_key and is_provider_available("anthropic"):
-                providers.append("anthropic")
+        # Cloud providers: include whenever keys exist, unless provider is on cooldown
+        if self.groq_key and is_provider_available("groq"):
+            providers.append("groq")
+        if self.tokenharbor_key and is_provider_available("tokenharbor"):
+            providers.append("tokenharbor")
+        if self.gemini_key and is_provider_available("gemini"):
+            providers.append("gemini")
+        if self.openai_key and is_provider_available("openai"):
+            providers.append("openai")
+        if self.anthropic_key and is_provider_available("anthropic"):
+            providers.append("anthropic")
 
-        # Local engines discovered or available
+        # Local engines discovered or available — ONLY append if actually verified listening locally
         local_status = self.discover_local_engines()
         if local_status.get("openjarvis") and is_provider_available("openjarvis"):
             providers.append("openjarvis")
         if local_status.get("omniroute") and is_provider_available("omniroute"):
             providers.append("omniroute")
-        if is_provider_available("lm_studio"):
+        if local_status.get("lm_studio") and is_provider_available("lm_studio"):
             providers.append("lm_studio")
-        if is_provider_available("ollama"):
+        if local_status.get("ollama") and is_provider_available("ollama"):
             providers.append("ollama")
 
         # Honor user-preferred provider override by placing it first
