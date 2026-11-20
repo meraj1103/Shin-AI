@@ -1558,7 +1558,10 @@ def handle_command(text: str) -> bool:
     # ── Hybrid Cloud Brain Delegation ─────────────────────────────────────────
     if os.getenv("SHIN_MODE", "standalone").lower() == "hybrid":
         try:
-            from Shin.core.cloud_client import CloudBrainClient
+            try:
+                from Shin.core.cloud_client import CloudBrainClient
+            except ImportError:
+                from core.cloud_client import CloudBrainClient
             client = CloudBrainClient()
             if client.is_available():
                 brain_resp = client.process_utterance(text)
